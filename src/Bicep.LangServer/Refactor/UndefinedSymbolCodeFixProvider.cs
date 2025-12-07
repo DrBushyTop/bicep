@@ -86,12 +86,27 @@ public class UndefinedSymbolCodeFixProvider : ICodeFixProvider
             var declaredAssignment = semanticModel.GetDeclaredTypeAssignment(variableAccess);
             var declaredAssignmentType = NullIfErrorOrAny(declaredAssignment?.Reference.Type);
             var inferredType = NullIfErrorOrAny(semanticModel.GetTypeInfo(variableAccess));
-            var effectiveType = declaredAssignmentType ?? contextualType ?? inferredType ?? InferByContext(semanticModel, variableAccess);
+            var contextInferredType = InferByContext(semanticModel, variableAccess);
+            var effectiveType = declaredAssignmentType ?? contextualType ?? inferredType ?? contextInferredType;
 
-            // For parameters, check for resource-derived types first, then named types, then fall back to TypeStringifier
-            var parameterTypeString = TryGetResourceInputTypeString(semanticModel, variableAccess)
-                ?? TryGetUserDefinedTypeName(semanticModel, declaredAssignment)
-                ?? GetTypeString(effectiveType);
+            // Priority order for parameter types:
+            // 1. If usage context clearly indicates a type (bool in condition, int in arithmetic), use that
+            // 2. Otherwise, try resource-derived types (for complex resource properties)
+            // 3. Then try named types
+            // 4. Finally fall back to TypeStringifier
+            string parameterTypeString;
+            if (contextInferredType is BooleanType or IntegerType)
+            {
+                // Clear usage context - use the inferred primitive type
+                parameterTypeString = GetTypeString(contextInferredType);
+            }
+            else
+            {
+                // No clear usage context - try resource-derived or complex types
+                parameterTypeString = TryGetResourceInputTypeString(semanticModel, variableAccess)
+                    ?? TryGetUserDefinedTypeName(semanticModel, declaredAssignment)
+                    ?? GetTypeString(effectiveType);
+            }
 
             // For variables, use simpler type string for initializer
             var variableTypeString = GetTypeString(effectiveType);
