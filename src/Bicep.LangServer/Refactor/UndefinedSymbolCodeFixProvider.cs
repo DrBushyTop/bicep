@@ -86,7 +86,9 @@ public class UndefinedSymbolCodeFixProvider : ICodeFixProvider
             var declaredAssignmentType = NullIfErrorOrAny(semanticModel.GetDeclaredTypeAssignment(variableAccess)?.Reference.Type);
             var inferredType = NullIfErrorOrAny(semanticModel.GetTypeInfo(variableAccess));
             var effectiveType = declaredAssignmentType ?? contextualType ?? inferredType ?? InferByContext(semanticModel, variableAccess);
-            var typeString = GetTypeString(effectiveType);
+
+            // Check if we should suggest resourceInput type
+            var typeString = TryGetResourceInputTypeString(semanticModel, variableAccess) ?? GetTypeString(effectiveType);
 
             foreach (var fix in CreateQuickFixes(parentStatement, name, typeString, effectiveType, NewLine))
             {
@@ -156,6 +158,53 @@ public class UndefinedSymbolCodeFixProvider : ICodeFixProvider
         ObjectType => "{}",
         _ => "''",
     };
+
+    private static string? TryGetResourceInputTypeString(SemanticModel semanticModel, VariableAccessSyntax variableAccess)
+    {
+        // Walk up to see if we're in a resource property assignment
+        SyntaxBase? current = variableAccess;
+        List<string> propertyPath = new();
+        bool foundPropertiesProperty = false;
+
+        // Build the property path by walking up through ObjectPropertySyntax nodes
+        while (current is not null)
+        {
+            current = semanticModel.Binder.GetParent(current);
+
+            if (current is ObjectPropertySyntax objProp && objProp.TryGetKeyText() is string propName)
+            {
+                // Add property name to the front of the path (we're walking backwards)
+                propertyPath.Insert(0, propName);
+
+                // Check if this is the "properties" property
+                if (propName == LanguageConstants.ResourcePropertiesPropertyName)
+                {
+                    foundPropertiesProperty = true;
+                }
+            }
+            else if (current is ResourceDeclarationSyntax resourceDecl)
+            {
+                // We've reached the resource declaration
+                if (!foundPropertiesProperty)
+                {
+                    // The variable is not inside a "properties" assignment
+                    return null;
+                }
+
+                // Try to get the resource type string
+                if (resourceDecl.Type is StringSyntax stringSyntax &&
+                    stringSyntax.TryGetLiteralValue() is string resourceTypeString)
+                {
+                    // Build the full type path: resourceInput<'Type@version'>.properties.encryption
+                    var fullPath = string.Join(".", propertyPath);
+                    return $"resourceInput<'{resourceTypeString}'>.{fullPath}";
+                }
+                break;
+            }
+        }
+
+        return null;
+    }
 
     private static TypeSymbol? NullIfErrorOrAny(TypeSymbol? type) => type is ErrorType or AnyType ? null : type;
 
