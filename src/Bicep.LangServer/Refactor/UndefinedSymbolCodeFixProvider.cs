@@ -32,6 +32,8 @@ public class UndefinedSymbolCodeFixProvider : ICodeFixProvider
         this.semanticModel = semanticModel;
     }
 
+    private string NewLine => semanticModel.Configuration.Formatting.Data.NewlineKind.ToEscapeSequence();
+
     public IEnumerable<CodeFix> GetFixes(SemanticModel semanticModel, IReadOnlyList<SyntaxBase> matchingNodes)
     {
         try
@@ -56,10 +58,12 @@ public class UndefinedSymbolCodeFixProvider : ICodeFixProvider
             return results;
         }
 
-        var variableAccessesInRange = matchingNodes.OfType<VariableAccessSyntax>();
+        // Filter to just variable access nodes from the cursor/selection position.
+        // These are the undefined symbols we can offer to create as parameters or variables.
+        var variableAccesses = matchingNodes.OfType<VariableAccessSyntax>();
         HashSet<string> seen = new(StringComparer.Ordinal);
 
-        foreach (var variableAccess in variableAccessesInRange)
+        foreach (var variableAccess in variableAccesses)
         {
             var diagnostic = diagnostics.FirstOrDefault(diag => SpansOverlap(variableAccess.Span.Position, variableAccess.GetEndPosition(), diag.Span));
             if (diagnostic is null)
@@ -84,9 +88,7 @@ public class UndefinedSymbolCodeFixProvider : ICodeFixProvider
             var effectiveType = declaredAssignmentType ?? contextualType ?? inferredType ?? InferByContext(semanticModel, variableAccess);
             var typeString = GetTypeString(effectiveType);
 
-            var newline = semanticModel.Configuration.Formatting.Data.NewlineKind.ToEscapeSequence();
-
-            foreach (var fix in CreateQuickFixes(parentStatement, name, typeString, effectiveType, newline))
+            foreach (var fix in CreateQuickFixes(parentStatement, name, typeString, effectiveType, NewLine))
             {
                 results.Add(fix);
             }
