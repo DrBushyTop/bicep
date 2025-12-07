@@ -83,14 +83,20 @@ public class UndefinedSymbolCodeFixProvider : ICodeFixProvider
             }
 
             var contextualType = NullIfErrorOrAny(semanticModel.GetDeclaredType(variableAccess));
-            var declaredAssignmentType = NullIfErrorOrAny(semanticModel.GetDeclaredTypeAssignment(variableAccess)?.Reference.Type);
+            var declaredAssignment = semanticModel.GetDeclaredTypeAssignment(variableAccess);
+            var declaredAssignmentType = NullIfErrorOrAny(declaredAssignment?.Reference.Type);
             var inferredType = NullIfErrorOrAny(semanticModel.GetTypeInfo(variableAccess));
             var effectiveType = declaredAssignmentType ?? contextualType ?? inferredType ?? InferByContext(semanticModel, variableAccess);
 
-            // Check if we should suggest resourceInput type
-            var typeString = TryGetResourceInputTypeString(semanticModel, variableAccess) ?? GetTypeString(effectiveType);
+            // For parameters, check for resource-derived types first, then named types, then fall back to TypeStringifier
+            var parameterTypeString = TryGetResourceInputTypeString(semanticModel, variableAccess)
+                ?? TryGetUserDefinedTypeName(semanticModel, declaredAssignment)
+                ?? GetTypeString(effectiveType);
 
-            foreach (var fix in CreateQuickFixes(parentStatement, name, typeString, effectiveType, NewLine))
+            // For variables, use simpler type string for initializer
+            var variableTypeString = GetTypeString(effectiveType);
+
+            foreach (var fix in CreateQuickFixes(parentStatement, name, parameterTypeString, variableTypeString, effectiveType, NewLine))
             {
                 results.Add(fix);
             }
@@ -99,14 +105,14 @@ public class UndefinedSymbolCodeFixProvider : ICodeFixProvider
         return results;
     }
 
-    private IEnumerable<CodeFix> CreateQuickFixes(StatementSyntax parentStatement, string name, string typeString, TypeSymbol? effectiveType, string newline)
+    private IEnumerable<CodeFix> CreateQuickFixes(StatementSyntax parentStatement, string name, string parameterTypeString, string variableTypeString, TypeSymbol? effectiveType, string newline)
     {
         var parameterInsertionOffset = FindInsertionOffset(parentStatement, typeof(ParameterDeclarationSyntax));
         yield return new CodeFix(
             $"Create parameter '{name}'",
             isPreferred: false,
             CodeFixKind.QuickFix,
-            new CodeReplacement(new TextSpan(parameterInsertionOffset, 0), $"param {name} {typeString}{newline}{newline}"));
+            new CodeReplacement(new TextSpan(parameterInsertionOffset, 0), $"param {name} {parameterTypeString}{newline}{newline}"));
 
         var variableInsertionOffset = FindInsertionOffset(parentStatement, typeof(VariableDeclarationSyntax));
         var defaultInitializer = GetDefaultInitializer(effectiveType);
@@ -231,7 +237,6 @@ public class UndefinedSymbolCodeFixProvider : ICodeFixProvider
         // Walk up to see if we're in a resource property assignment
         SyntaxBase? current = variableAccess;
         List<string> propertyPath = new();
-        bool foundPropertiesProperty = false;
 
         // Build the property path by walking up through ObjectPropertySyntax nodes
         while (current is not null)
@@ -242,19 +247,14 @@ public class UndefinedSymbolCodeFixProvider : ICodeFixProvider
             {
                 // Add property name to the front of the path (we're walking backwards)
                 propertyPath.Insert(0, propName);
-
-                // Check if this is the "properties" property
-                if (propName == LanguageConstants.ResourcePropertiesPropertyName)
-                {
-                    foundPropertiesProperty = true;
-                }
             }
             else if (current is ResourceDeclarationSyntax resourceDecl)
             {
                 // We've reached the resource declaration
-                if (!foundPropertiesProperty)
+                // Generate resourceInput type for any resource property with a path
+                if (propertyPath.Count == 0)
                 {
-                    // The variable is not inside a "properties" assignment
+                    // No property path found
                     return null;
                 }
 
@@ -262,12 +262,74 @@ public class UndefinedSymbolCodeFixProvider : ICodeFixProvider
                 if (resourceDecl.Type is StringSyntax stringSyntax &&
                     stringSyntax.TryGetLiteralValue() is string resourceTypeString)
                 {
-                    // Build the full type path: resourceInput<'Type@version'>.properties.encryption
+                    // Build the full type path: resourceInput<'Type@version'>.sku or .properties.encryption
                     var fullPath = string.Join(".", propertyPath);
                     return $"resourceInput<'{resourceTypeString}'>.{fullPath}";
                 }
                 break;
             }
+        }
+
+        return null;
+    }
+
+    private static string? TryGetUserDefinedTypeName(SemanticModel semanticModel, DeclaredTypeAssignment? assignment)
+    {
+        if (assignment is null)
+        {
+            return null;
+        }
+
+        // Check if the declaring syntax is a type variable access that references a type alias
+        if (assignment.DeclaringSyntax is TypeVariableAccessSyntax typeVarAccess)
+        {
+            var symbol = semanticModel.Binder.GetSymbolInfo(typeVarAccess);
+            if (symbol is TypeAliasSymbol typeAlias)
+            {
+                // Check for nullability
+                var isNullable = TypeHelper.IsNullable(assignment.Reference.Type);
+                return isNullable ? $"{typeAlias.Name}?" : typeAlias.Name;
+            }
+        }
+
+        // For output declarations and other cases, search the ancestor tree for statements
+        // that might have type annotations
+        SyntaxBase? current = assignment.DeclaringSyntax;
+        while (current is not null)
+        {
+            // Check for output/parameter/variable declarations with type annotations
+            if (current is OutputDeclarationSyntax outputDecl && outputDecl.Type is TypeVariableAccessSyntax outputTypeAccess)
+            {
+                var symbol = semanticModel.Binder.GetSymbolInfo(outputTypeAccess);
+                if (symbol is TypeAliasSymbol typeAlias)
+                {
+                    var isNullable = TypeHelper.IsNullable(assignment.Reference.Type);
+                    return isNullable ? $"{typeAlias.Name}?" : typeAlias.Name;
+                }
+            }
+
+            if (current is ParameterDeclarationSyntax paramDecl && paramDecl.Type is TypeVariableAccessSyntax paramTypeAccess)
+            {
+                var symbol = semanticModel.Binder.GetSymbolInfo(paramTypeAccess);
+                if (symbol is TypeAliasSymbol typeAlias)
+                {
+                    var isNullable = TypeHelper.IsNullable(assignment.Reference.Type);
+                    return isNullable ? $"{typeAlias.Name}?" : typeAlias.Name;
+                }
+            }
+
+            // Also check for TypeVariableAccessSyntax in the current node itself
+            if (current is TypeVariableAccessSyntax typeAccess)
+            {
+                var symbol = semanticModel.Binder.GetSymbolInfo(typeAccess);
+                if (symbol is TypeAliasSymbol typeAlias)
+                {
+                    var isNullable = TypeHelper.IsNullable(assignment.Reference.Type);
+                    return isNullable ? $"{typeAlias.Name}?" : typeAlias.Name;
+                }
+            }
+
+            current = semanticModel.Binder.GetParent(current);
         }
 
         return null;

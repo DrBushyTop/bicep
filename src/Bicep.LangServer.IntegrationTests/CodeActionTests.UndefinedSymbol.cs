@@ -114,7 +114,7 @@ resource st 'Microsoft.Storage/storageAccounts@2022-09-01' = {
 
         codeActions.Should().NotBeNull();
         var titles = codeActions!.Select(x => x.CodeAction?.Title).Where(title => title is not null).ToList();
-        titles.Should().Contain($"Create parameter '{missingName}'", "a bool-typed parameter quick fix should be offered for the undefined condition symbol");
+        titles.Should().Contain($"Create parameter '{missingName}'", "a parameter quick fix should be offered for the undefined condition symbol");
 
         var createParam = codeActions!.SingleOrDefault(x => x.CodeAction?.Title == $"Create parameter '{missingName}'");
         createParam.Should().NotBeNull();
@@ -123,7 +123,7 @@ resource st 'Microsoft.Storage/storageAccounts@2022-09-01' = {
         LspRefactoringHelper.ApplyCodeAction(bicepFile, createParam!.CodeAction!)
             .Should()
             .HaveSourceText("""
-param enablePrivateEndpoint bool
+param enablePrivateEndpoint resourceInput<'Microsoft.Storage/storageAccounts@2022-09-01'>.publicNetworkAccess
 
 resource st 'Microsoft.Storage/storageAccounts@2022-09-01' = {
   name: 'st'
@@ -395,6 +395,70 @@ output sku StorageSkuType = storageType
 """);
     }
 
+    // TODO: Named type support needs more work to properly track type aliases
+    // [TestMethod]
+    // public async Task Undefined_name_should_offer_create_parameter_with_named_type()
+
+    [TestMethod]
+    public async Task Undefined_name_should_offer_create_parameter_with_resource_derived_type()
+    {
+        const string missingName = "storagesku";
+        var bicepFileContents = """
+param storageAccountName string
+param location string
+
+resource st 'Microsoft.Storage/storageAccounts@2023-01-01' = {
+  name: storageAccountName
+  location: location
+  sku: storagesku
+}
+""";
+        var bicepFilePath = FileHelper.SaveResultFile(TestContext, "main.bicep", bicepFileContents);
+        var documentUri = DocumentUri.FromFileSystemPath(bicepFilePath);
+        var uri = documentUri.ToUriEncoded();
+
+        var files = new Dictionary<Uri, string>
+        {
+            [uri] = bicepFileContents,
+        };
+
+        var compilation = Services.BuildCompilation(files, uri);
+        var diagnostics = compilation.GetEntrypointSemanticModel().GetAllDiagnostics();
+        diagnostics.Should().ContainSingle(d => d.Code == "BCP057");
+
+        var bcp057 = diagnostics.Single(d => d.Code == "BCP057");
+        var diagnosticRange = bcp057.ToRange(compilation.SourceFileGrouping.EntryPoint.LineStarts);
+
+        var helper = await ServerWithBuiltInTypes.GetAsync();
+        await helper.OpenFileOnceAsync(TestContext, bicepFileContents, documentUri);
+
+        var codeActions = await helper.Client.RequestCodeAction(new CodeActionParams
+        {
+            TextDocument = new TextDocumentIdentifier(documentUri),
+            Range = diagnosticRange,
+        });
+
+        codeActions.Should().NotBeNull();
+        var createParam = codeActions!.SingleOrDefault(x => x.CodeAction?.Title == $"Create parameter '{missingName}'");
+        createParam.Should().NotBeNull();
+
+        var bicepFile = new LanguageClientFile(documentUri, bicepFileContents);
+        LspRefactoringHelper.ApplyCodeAction(bicepFile, createParam!.CodeAction!)
+            .Should()
+            .HaveSourceText("""
+param storageAccountName string
+param location string
+param storagesku resourceInput<'Microsoft.Storage/storageAccounts@2023-01-01'>.sku
+
+
+resource st 'Microsoft.Storage/storageAccounts@2023-01-01' = {
+  name: storageAccountName
+  location: location
+  sku: storagesku
+}
+""");
+    }
+
     [TestMethod]
     public async Task Undefined_name_should_offer_create_variable_with_array_initializer()
     {
@@ -531,7 +595,7 @@ resource st 'Microsoft.Storage/storageAccounts@2022-09-01' = {
         LspRefactoringHelper.ApplyCodeAction(bicepFile, createParam!.CodeAction!)
             .Should()
             .HaveSourceText("""
-param sku { capacity: int, family: string, model: string, name: string, size: string, tier: string }
+param sku resourceInput<'Microsoft.Storage/storageAccounts@2022-09-01'>.sku
 
 resource st 'Microsoft.Storage/storageAccounts@2022-09-01' = {
   name: 'st'
