@@ -92,9 +92,18 @@ namespace Bicep.LangServer.IntegrationTests
                         var bicepFixes = allFixables.Where(SpansOverlapOrAbut).SelectMany(f => f.Fixes).ToHashSet();
                         var quickFixList = quickFixes!.Where(x => x.CodeAction?.Kind == CodeActionKind.QuickFix).ToList();
 
-                        var bicepFixTitles = bicepFixes.Select(f => f.Title);
-                        var quickFixTitles = quickFixList.Select(f => f.CodeAction?.Title);
-                        bicepFixTitles.Should().BeEquivalentTo(quickFixTitles);
+                        // If there are no IFixable diagnostics, we don't assert on quick fixes produced by other providers.
+                        if (!bicepFixes.Any())
+                        {
+                            continue;
+                        }
+
+                        var bicepFixTitles = bicepFixes.Select(f => f.Title).ToList();
+                        var quickFixTitles = quickFixList.Select(f => f.CodeAction?.Title).Where(title => title is not null).ToList();
+
+                        // Quick fix responses may include additional provider-generated fixes (e.g., undefined symbol quick fixes),
+                        // but they must always include any fixes produced by IFixable diagnostics.
+                        quickFixTitles.Should().Contain(bicepFixTitles);
 
                         for (int i = 0; i < quickFixList.Count; i++)
                         {
