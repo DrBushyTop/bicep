@@ -132,17 +132,7 @@ namespace Bicep.LanguageServer.Handlers
             ];
 
             return providers
-                .SelectMany(provider =>
-                {
-                    try
-                    {
-                        return provider.GetFixes(model, matchingNodes);
-                    }
-                    catch
-                    {
-                        return [];
-                    }
-                });
+                .SelectMany(provider => provider.GetFixes(model, matchingNodes));
         }
 
         private static IEnumerable<DecoratorCodeFixProvider> GetDecoratorCodeFixProviders(SemanticModel semanticModel)
