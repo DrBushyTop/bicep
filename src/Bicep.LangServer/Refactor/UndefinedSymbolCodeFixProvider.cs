@@ -101,14 +101,14 @@ public class UndefinedSymbolCodeFixProvider : ICodeFixProvider
         yield return new CodeFix(
             $"Create parameter '{name}'",
             isPreferred: false,
-            CodeFixKind.Refactor,
+            CodeFixKind.QuickFix,
             new CodeReplacement(new TextSpan(parameterInsertionOffset, 0), $"param {name} {typeString}{newline}{newline}"));
 
         var variableInsertionOffset = FindInsertionOffset(parentStatement, typeof(VariableDeclarationSyntax));
         yield return new CodeFix(
             $"Create variable '{name}'",
             isPreferred: false,
-            CodeFixKind.Refactor,
+            CodeFixKind.QuickFix,
             new CodeReplacement(new TextSpan(variableInsertionOffset, 0), $"var {name} = ''{newline}{newline}"));
     }
 
