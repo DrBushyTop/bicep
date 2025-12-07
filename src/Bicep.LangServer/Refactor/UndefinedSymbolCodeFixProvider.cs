@@ -140,24 +140,91 @@ public class UndefinedSymbolCodeFixProvider : ICodeFixProvider
         return TextCoordinateConverter.GetOffset(lineStarts, anchorStartLine, 0);
     }
 
-    private static string GetTypeString(TypeSymbol? type) => type switch
+    private static string GetTypeString(TypeSymbol? type)
     {
-        StringType => "string",
-        BooleanType => "bool",
-        IntegerType => "int",
-        ArrayType => "array",
-        ObjectType => "object",
-        _ => "string",
-    };
+        // Use TypeStringifier for consistent type string generation
+        // Medium strictness gives us reasonable types (e.g., 'int' instead of literal '123')
+        // Remove top-level nullability since parameters should typically not be nullable by default
+        return TypeStringifier.Stringify(type, typeProperty: null, TypeStringifier.Strictness.Medium, removeTopLevelNullability: true);
+    }
 
-    private static string GetDefaultInitializer(TypeSymbol? type) => type switch
+    private static string GetDefaultInitializer(TypeSymbol? type)
     {
-        BooleanType => "false",
-        IntegerType => "0",
-        ArrayType => "[]",
-        ObjectType => "{}",
-        _ => "''",
-    };
+        return GetDefaultInitializerCore(type, []);
+    }
+
+    private static string GetDefaultInitializerCore(TypeSymbol? type, HashSet<TypeSymbol> visitedTypes)
+    {
+        if (type is null)
+        {
+            return "''";
+        }
+
+        // Prevent infinite recursion for recursive types
+        if (visitedTypes.Contains(type))
+        {
+            return "{}";
+        }
+
+        // Handle nullable types - use the non-null default
+        if (TypeHelper.TryRemoveNullability(type) is TypeSymbol nonNullableType)
+        {
+            return GetDefaultInitializerCore(nonNullableType, visitedTypes);
+        }
+
+        return type switch
+        {
+            BooleanLiteralType boolLit => boolLit.Value.ToString().ToLowerInvariant(),
+            BooleanType => "false",
+            IntegerLiteralType intLit => intLit.Value.ToString(),
+            IntegerType => "0",
+            StringLiteralType strLit => StringUtils.EscapeBicepString(strLit.RawStringValue),
+            StringType => "''",
+            ArrayType or TypedArrayType or TupleType => "[]",
+            ObjectType objectType => GetDefaultInitializerForObject(objectType, visitedTypes),
+            UnionType union => GetDefaultInitializerForUnion(union, visitedTypes),
+            _ => "''"
+        };
+    }
+
+    private static string GetDefaultInitializerForObject(ObjectType objectType, HashSet<TypeSymbol> visitedTypes)
+    {
+        var writeableProperties = objectType.Properties.Values
+            .Where(p => !p.Flags.HasFlag(TypePropertyFlags.ReadOnly))
+            .ToArray();
+
+        // For empty objects or objects with only optional properties, just use {}
+        if (writeableProperties.Length == 0)
+        {
+            return "{}";
+        }
+
+        // Don't generate full objects for types that are too complex or have many properties
+        // Keep it simple and readable
+        if (writeableProperties.Length > 5)
+        {
+            return "{}";
+        }
+
+        visitedTypes = [.. visitedTypes, objectType];
+
+        var properties = writeableProperties
+            .Select(p =>
+            {
+                var propName = StringUtils.EscapeBicepPropertyName(p.Name);
+                var defaultValue = GetDefaultInitializerCore(p.TypeReference.Type, visitedTypes);
+                return $"{propName}: {defaultValue}";
+            });
+
+        return $"{{ {string.Join(", ", properties)} }}";
+    }
+
+    private static string GetDefaultInitializerForUnion(UnionType union, HashSet<TypeSymbol> visitedTypes)
+    {
+        // For unions, try to pick a reasonable default from the first non-null member
+        var firstNonNullMember = union.Members.FirstOrDefault(m => m.Type is not NullType)?.Type;
+        return firstNonNullMember is not null ? GetDefaultInitializerCore(firstNonNullMember, visitedTypes) : "null";
+    }
 
     private static string? TryGetResourceInputTypeString(SemanticModel semanticModel, VariableAccessSyntax variableAccess)
     {

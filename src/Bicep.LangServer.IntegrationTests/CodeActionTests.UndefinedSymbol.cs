@@ -288,6 +288,114 @@ resource st 'Microsoft.Storage/storageAccounts@2022-09-01' = {
     }
 
     [TestMethod]
+    public async Task Undefined_name_should_offer_create_variable_with_typed_object_properties()
+    {
+        const string missingName = "config";
+        var bicepFileContents = """
+type ConfigType = {
+  enabled: bool
+  count: int
+  name: string
+}
+
+output out ConfigType = config
+""";
+        var bicepFilePath = FileHelper.SaveResultFile(TestContext, "main.bicep", bicepFileContents);
+        var documentUri = DocumentUri.FromFileSystemPath(bicepFilePath);
+        var uri = documentUri.ToUriEncoded();
+
+        var files = new Dictionary<Uri, string>
+        {
+            [uri] = bicepFileContents,
+        };
+
+        var compilation = Services.BuildCompilation(files, uri);
+        var diagnostics = compilation.GetEntrypointSemanticModel().GetAllDiagnostics();
+        diagnostics.Should().ContainSingle(d => d.Code == "BCP057");
+
+        var bcp057 = diagnostics.Single(d => d.Code == "BCP057");
+        var diagnosticRange = bcp057.ToRange(compilation.SourceFileGrouping.EntryPoint.LineStarts);
+
+        var helper = await ServerWithBuiltInTypes.GetAsync();
+        await helper.OpenFileOnceAsync(TestContext, bicepFileContents, documentUri);
+
+        var codeActions = await helper.Client.RequestCodeAction(new CodeActionParams
+        {
+            TextDocument = new TextDocumentIdentifier(documentUri),
+            Range = diagnosticRange,
+        });
+
+        codeActions.Should().NotBeNull();
+        var createVar = codeActions!.SingleOrDefault(x => x.CodeAction?.Title == $"Create variable '{missingName}'");
+        createVar.Should().NotBeNull();
+
+        var bicepFile = new LanguageClientFile(documentUri, bicepFileContents);
+        LspRefactoringHelper.ApplyCodeAction(bicepFile, createVar!.CodeAction!)
+            .Should()
+            .HaveSourceText("""
+type ConfigType = {
+  enabled: bool
+  count: int
+  name: string
+}
+
+var config = { count: 0, enabled: false, name: '' }
+
+output out ConfigType = config
+""");
+    }
+
+    [TestMethod]
+    public async Task Undefined_name_should_offer_create_variable_with_union_type_initializer()
+    {
+        const string missingName = "storageType";
+        var bicepFileContents = """
+type StorageSkuType = 'Standard_LRS' | 'Standard_GRS' | 'Premium_LRS'
+
+output sku StorageSkuType = storageType
+""";
+        var bicepFilePath = FileHelper.SaveResultFile(TestContext, "main.bicep", bicepFileContents);
+        var documentUri = DocumentUri.FromFileSystemPath(bicepFilePath);
+        var uri = documentUri.ToUriEncoded();
+
+        var files = new Dictionary<Uri, string>
+        {
+            [uri] = bicepFileContents,
+        };
+
+        var compilation = Services.BuildCompilation(files, uri);
+        var diagnostics = compilation.GetEntrypointSemanticModel().GetAllDiagnostics();
+        diagnostics.Should().ContainSingle(d => d.Code == "BCP057");
+
+        var bcp057 = diagnostics.Single(d => d.Code == "BCP057");
+        var diagnosticRange = bcp057.ToRange(compilation.SourceFileGrouping.EntryPoint.LineStarts);
+
+        var helper = await ServerWithBuiltInTypes.GetAsync();
+        await helper.OpenFileOnceAsync(TestContext, bicepFileContents, documentUri);
+
+        var codeActions = await helper.Client.RequestCodeAction(new CodeActionParams
+        {
+            TextDocument = new TextDocumentIdentifier(documentUri),
+            Range = diagnosticRange,
+        });
+
+        codeActions.Should().NotBeNull();
+        var createVar = codeActions!.SingleOrDefault(x => x.CodeAction?.Title == $"Create variable '{missingName}'");
+        createVar.Should().NotBeNull();
+
+        var bicepFile = new LanguageClientFile(documentUri, bicepFileContents);
+        LspRefactoringHelper.ApplyCodeAction(bicepFile, createVar!.CodeAction!)
+            .Should()
+            .HaveSourceText("""
+type StorageSkuType = 'Standard_LRS' | 'Standard_GRS' | 'Premium_LRS'
+
+var storageType = 'Premium_LRS'
+
+output sku StorageSkuType = storageType
+""");
+    }
+
+    [TestMethod]
     public async Task Undefined_name_should_offer_create_variable_with_array_initializer()
     {
         const string missingName = "myItems";
@@ -423,7 +531,7 @@ resource st 'Microsoft.Storage/storageAccounts@2022-09-01' = {
         LspRefactoringHelper.ApplyCodeAction(bicepFile, createParam!.CodeAction!)
             .Should()
             .HaveSourceText("""
-param sku object
+param sku { capacity: int, family: string, model: string, name: string, size: string, tier: string }
 
 resource st 'Microsoft.Storage/storageAccounts@2022-09-01' = {
   name: 'st'
