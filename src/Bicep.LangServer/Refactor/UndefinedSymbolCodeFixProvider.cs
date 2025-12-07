@@ -86,7 +86,7 @@ public class UndefinedSymbolCodeFixProvider : ICodeFixProvider
 
             var newline = semanticModel.Configuration.Formatting.Data.NewlineKind.ToEscapeSequence();
 
-            foreach (var fix in CreateQuickFixes(parentStatement, name, typeString, newline))
+            foreach (var fix in CreateQuickFixes(parentStatement, name, typeString, effectiveType, newline))
             {
                 results.Add(fix);
             }
@@ -95,7 +95,7 @@ public class UndefinedSymbolCodeFixProvider : ICodeFixProvider
         return results;
     }
 
-    private IEnumerable<CodeFix> CreateQuickFixes(StatementSyntax parentStatement, string name, string typeString, string newline)
+    private IEnumerable<CodeFix> CreateQuickFixes(StatementSyntax parentStatement, string name, string typeString, TypeSymbol? effectiveType, string newline)
     {
         var parameterInsertionOffset = FindInsertionOffset(parentStatement, typeof(ParameterDeclarationSyntax));
         yield return new CodeFix(
@@ -105,11 +105,12 @@ public class UndefinedSymbolCodeFixProvider : ICodeFixProvider
             new CodeReplacement(new TextSpan(parameterInsertionOffset, 0), $"param {name} {typeString}{newline}{newline}"));
 
         var variableInsertionOffset = FindInsertionOffset(parentStatement, typeof(VariableDeclarationSyntax));
+        var defaultInitializer = GetDefaultInitializer(effectiveType);
         yield return new CodeFix(
             $"Create variable '{name}'",
             isPreferred: false,
             CodeFixKind.QuickFix,
-            new CodeReplacement(new TextSpan(variableInsertionOffset, 0), $"var {name} = ''{newline}{newline}"));
+            new CodeReplacement(new TextSpan(variableInsertionOffset, 0), $"var {name} = {defaultInitializer}{newline}{newline}"));
     }
 
     private int FindInsertionOffset(StatementSyntax anchorStatement, Type declarationType)
@@ -143,6 +144,15 @@ public class UndefinedSymbolCodeFixProvider : ICodeFixProvider
         ArrayType => "array",
         ObjectType => "object",
         _ => "string",
+    };
+
+    private static string GetDefaultInitializer(TypeSymbol? type) => type switch
+    {
+        BooleanType => "false",
+        IntegerType => "0",
+        ArrayType => "[]",
+        ObjectType => "{}",
+        _ => "''",
     };
 
     private static TypeSymbol? NullIfErrorOrAny(TypeSymbol? type) => type is ErrorType or AnyType ? null : type;

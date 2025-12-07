@@ -134,6 +134,160 @@ resource st 'Microsoft.Storage/storageAccounts@2022-09-01' = {
     }
 
     [TestMethod]
+    public async Task Undefined_name_should_offer_create_variable_with_bool_initializer()
+    {
+        const string missingName = "enablePrivateEndpoint";
+        var bicepFileContents = """
+resource st 'Microsoft.Storage/storageAccounts@2022-09-01' = {
+  name: 'st'
+  location: 'westus'
+  publicNetworkAccess: enablePrivateEndpoint ? 'Disabled' : 'Enabled'
+}
+""";
+        var bicepFilePath = FileHelper.SaveResultFile(TestContext, "main.bicep", bicepFileContents);
+        var documentUri = DocumentUri.FromFileSystemPath(bicepFilePath);
+        var uri = documentUri.ToUriEncoded();
+
+        var files = new Dictionary<Uri, string>
+        {
+            [uri] = bicepFileContents,
+        };
+
+        var compilation = Services.BuildCompilation(files, uri);
+        var diagnostics = compilation.GetEntrypointSemanticModel().GetAllDiagnostics();
+        diagnostics.Should().ContainSingle(d => d.Code == "BCP057");
+
+        var bcp057 = diagnostics.Single(d => d.Code == "BCP057");
+        var diagnosticRange = bcp057.ToRange(compilation.SourceFileGrouping.EntryPoint.LineStarts);
+
+        var helper = await ServerWithBuiltInTypes.GetAsync();
+        await helper.OpenFileOnceAsync(TestContext, bicepFileContents, documentUri);
+
+        var codeActions = await helper.Client.RequestCodeAction(new CodeActionParams
+        {
+            TextDocument = new TextDocumentIdentifier(documentUri),
+            Range = diagnosticRange,
+        });
+
+        codeActions.Should().NotBeNull();
+        var createVar = codeActions!.SingleOrDefault(x => x.CodeAction?.Title == $"Create variable '{missingName}'");
+        createVar.Should().NotBeNull();
+
+        var bicepFile = new LanguageClientFile(documentUri, bicepFileContents);
+        LspRefactoringHelper.ApplyCodeAction(bicepFile, createVar!.CodeAction!)
+            .Should()
+            .HaveSourceText("""
+var enablePrivateEndpoint = false
+
+resource st 'Microsoft.Storage/storageAccounts@2022-09-01' = {
+  name: 'st'
+  location: 'westus'
+  publicNetworkAccess: enablePrivateEndpoint ? 'Disabled' : 'Enabled'
+}
+""");
+    }
+
+    [TestMethod]
+    public async Task Undefined_name_should_offer_create_variable_with_int_initializer()
+    {
+        const string missingName = "replicas";
+        var bicepFileContents = """
+output total int = replicas + 2
+""";
+        var bicepFilePath = FileHelper.SaveResultFile(TestContext, "main.bicep", bicepFileContents);
+        var documentUri = DocumentUri.FromFileSystemPath(bicepFilePath);
+        var uri = documentUri.ToUriEncoded();
+
+        var files = new Dictionary<Uri, string>
+        {
+            [uri] = bicepFileContents,
+        };
+
+        var compilation = Services.BuildCompilation(files, uri);
+        var diagnostics = compilation.GetEntrypointSemanticModel().GetAllDiagnostics();
+        diagnostics.Should().ContainSingle(d => d.Code == "BCP057");
+
+        var bcp057 = diagnostics.Single(d => d.Code == "BCP057");
+        var diagnosticRange = bcp057.ToRange(compilation.SourceFileGrouping.EntryPoint.LineStarts);
+
+        var helper = await ServerWithBuiltInTypes.GetAsync();
+        await helper.OpenFileOnceAsync(TestContext, bicepFileContents, documentUri);
+
+        var codeActions = await helper.Client.RequestCodeAction(new CodeActionParams
+        {
+            TextDocument = new TextDocumentIdentifier(documentUri),
+            Range = diagnosticRange,
+        });
+
+        codeActions.Should().NotBeNull();
+        var createVar = codeActions!.SingleOrDefault(x => x.CodeAction?.Title == $"Create variable '{missingName}'");
+        createVar.Should().NotBeNull();
+
+        var bicepFile = new LanguageClientFile(documentUri, bicepFileContents);
+        LspRefactoringHelper.ApplyCodeAction(bicepFile, createVar!.CodeAction!)
+            .Should()
+            .HaveSourceText("""
+var replicas = 0
+
+output total int = replicas + 2
+""");
+    }
+
+    [TestMethod]
+    public async Task Undefined_name_should_offer_create_variable_with_object_initializer()
+    {
+        const string missingName = "sku";
+        var bicepFileContents = """
+resource st 'Microsoft.Storage/storageAccounts@2022-09-01' = {
+  name: 'st'
+  location: 'westus'
+  sku: sku
+}
+""";
+        var bicepFilePath = FileHelper.SaveResultFile(TestContext, "main.bicep", bicepFileContents);
+        var documentUri = DocumentUri.FromFileSystemPath(bicepFilePath);
+        var uri = documentUri.ToUriEncoded();
+
+        var files = new Dictionary<Uri, string>
+        {
+            [uri] = bicepFileContents,
+        };
+
+        var compilation = Services.BuildCompilation(files, uri);
+        var diagnostics = compilation.GetEntrypointSemanticModel().GetAllDiagnostics();
+        diagnostics.Should().ContainSingle(d => d.Code == "BCP057");
+
+        var bcp057 = diagnostics.Single(d => d.Code == "BCP057");
+        var diagnosticRange = bcp057.ToRange(compilation.SourceFileGrouping.EntryPoint.LineStarts);
+
+        var helper = await ServerWithBuiltInTypes.GetAsync();
+        await helper.OpenFileOnceAsync(TestContext, bicepFileContents, documentUri);
+
+        var codeActions = await helper.Client.RequestCodeAction(new CodeActionParams
+        {
+            TextDocument = new TextDocumentIdentifier(documentUri),
+            Range = diagnosticRange,
+        });
+
+        codeActions.Should().NotBeNull();
+        var createVar = codeActions!.SingleOrDefault(x => x.CodeAction?.Title == $"Create variable '{missingName}'");
+        createVar.Should().NotBeNull();
+
+        var bicepFile = new LanguageClientFile(documentUri, bicepFileContents);
+        LspRefactoringHelper.ApplyCodeAction(bicepFile, createVar!.CodeAction!)
+            .Should()
+            .HaveSourceText("""
+var sku = {}
+
+resource st 'Microsoft.Storage/storageAccounts@2022-09-01' = {
+  name: 'st'
+  location: 'westus'
+  sku: sku
+}
+""");
+    }
+
+    [TestMethod]
     public async Task Undefined_name_used_in_arithmetic_should_infer_int_parameter()
     {
         const string missingName = "replicas";

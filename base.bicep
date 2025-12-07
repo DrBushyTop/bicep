@@ -21,8 +21,6 @@ param tags object = {}
 
 @description('Toggle diagnostic settings creation.')
 param enableDiagnostics bool = true
-param enablePrivateEndpoint bool
-
 
 resource __saFriendlyId__ 'Microsoft.Storage/storageAccounts@2025-06-01' = {
   name: storageAccountName
