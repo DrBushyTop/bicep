@@ -127,11 +127,22 @@ namespace Bicep.LanguageServer.Handlers
             ICodeFixProvider[] providers = [
                 .. GetDecoratorCodeFixProviders(model),
                 new ExpressionAndTypeExtractor(model),
+                new UndefinedSymbolCodeFixProvider(model),
                 new MultilineStringCodeFixProvider(),
             ];
 
             return providers
-                .SelectMany(provider => provider.GetFixes(model, matchingNodes));
+                .SelectMany(provider =>
+                {
+                    try
+                    {
+                        return provider.GetFixes(model, matchingNodes);
+                    }
+                    catch
+                    {
+                        return [];
+                    }
+                });
         }
 
         private static IEnumerable<DecoratorCodeFixProvider> GetDecoratorCodeFixProviders(SemanticModel semanticModel)
