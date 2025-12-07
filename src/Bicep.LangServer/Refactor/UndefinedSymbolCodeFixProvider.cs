@@ -402,6 +402,15 @@ public class UndefinedSymbolCodeFixProvider : ICodeFixProvider
                     return true;
                 }
             }
+            if (current is IfConditionSyntax ifCondition)
+            {
+                // Check if the access is within the condition expression (not the body)
+                if (access.Span.Position >= ifCondition.ConditionExpression.Span.Position &&
+                    access.Span.GetEndPosition() <= ifCondition.ConditionExpression.Span.GetEndPosition())
+                {
+                    return true;
+                }
+            }
 
             current = model.Binder.GetParent(current);
         }
