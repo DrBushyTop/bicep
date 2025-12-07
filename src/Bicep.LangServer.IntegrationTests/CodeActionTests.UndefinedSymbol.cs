@@ -113,11 +113,14 @@ resource st 'Microsoft.Storage/storageAccounts@2022-09-01' = {
         });
 
         codeActions.Should().NotBeNull();
+        var titles = codeActions!.Select(x => x.CodeAction?.Title).Where(title => title is not null).ToList();
+        titles.Should().Contain($"Create parameter '{missingName}'", "a bool-typed parameter quick fix should be offered for the undefined condition symbol");
 
-        var createParam = codeActions!.Single(x => x.CodeAction?.Title == $"Create parameter '{missingName}'");
+        var createParam = codeActions!.SingleOrDefault(x => x.CodeAction?.Title == $"Create parameter '{missingName}'");
+        createParam.Should().NotBeNull();
 
         var bicepFile = new LanguageClientFile(documentUri, bicepFileContents);
-        LspRefactoringHelper.ApplyCodeAction(bicepFile, createParam.CodeAction!)
+        LspRefactoringHelper.ApplyCodeAction(bicepFile, createParam!.CodeAction!)
             .Should()
             .HaveSourceText("""
 param enablePrivateEndpoint bool
@@ -126,6 +129,106 @@ resource st 'Microsoft.Storage/storageAccounts@2022-09-01' = {
   name: 'st'
   location: 'westus'
   publicNetworkAccess: enablePrivateEndpoint ? 'Disabled' : 'Enabled'
+}
+""");
+    }
+
+    [TestMethod]
+    public async Task Undefined_name_used_in_arithmetic_should_infer_int_parameter()
+    {
+        const string missingName = "replicas";
+        var bicepFileContents = """
+output total int = replicas + 2
+""";
+        var bicepFilePath = FileHelper.SaveResultFile(TestContext, "main.bicep", bicepFileContents);
+        var documentUri = DocumentUri.FromFileSystemPath(bicepFilePath);
+        var uri = documentUri.ToUriEncoded();
+
+        var files = new Dictionary<Uri, string>
+        {
+            [uri] = bicepFileContents,
+        };
+
+        var compilation = Services.BuildCompilation(files, uri);
+        var diagnostics = compilation.GetEntrypointSemanticModel().GetAllDiagnostics();
+        diagnostics.Should().ContainSingle(d => d.Code == "BCP057");
+
+        var bcp057 = diagnostics.Single(d => d.Code == "BCP057");
+        var diagnosticRange = bcp057.ToRange(compilation.SourceFileGrouping.EntryPoint.LineStarts);
+
+        var helper = await ServerWithBuiltInTypes.GetAsync();
+        await helper.OpenFileOnceAsync(TestContext, bicepFileContents, documentUri);
+
+        var codeActions = await helper.Client.RequestCodeAction(new CodeActionParams
+        {
+            TextDocument = new TextDocumentIdentifier(documentUri),
+            Range = diagnosticRange,
+        });
+
+        codeActions.Should().NotBeNull();
+        var createParam = codeActions!.SingleOrDefault(x => x.CodeAction?.Title == $"Create parameter '{missingName}'");
+        createParam.Should().NotBeNull();
+
+        var bicepFile = new LanguageClientFile(documentUri, bicepFileContents);
+        LspRefactoringHelper.ApplyCodeAction(bicepFile, createParam!.CodeAction!)
+            .Should()
+            .HaveSourceText("""
+param replicas int
+
+output total int = replicas + 2
+""");
+    }
+
+    [TestMethod]
+    public async Task Undefined_name_used_in_object_context_should_infer_object_parameter()
+    {
+        const string missingName = "sku";
+        var bicepFileContents = """
+resource st 'Microsoft.Storage/storageAccounts@2022-09-01' = {
+  name: 'st'
+  location: 'westus'
+  sku: sku
+}
+""";
+        var bicepFilePath = FileHelper.SaveResultFile(TestContext, "main.bicep", bicepFileContents);
+        var documentUri = DocumentUri.FromFileSystemPath(bicepFilePath);
+        var uri = documentUri.ToUriEncoded();
+
+        var files = new Dictionary<Uri, string>
+        {
+            [uri] = bicepFileContents,
+        };
+
+        var compilation = Services.BuildCompilation(files, uri);
+        var diagnostics = compilation.GetEntrypointSemanticModel().GetAllDiagnostics();
+        diagnostics.Should().ContainSingle(d => d.Code == "BCP057");
+
+        var bcp057 = diagnostics.Single(d => d.Code == "BCP057");
+        var diagnosticRange = bcp057.ToRange(compilation.SourceFileGrouping.EntryPoint.LineStarts);
+
+        var helper = await ServerWithBuiltInTypes.GetAsync();
+        await helper.OpenFileOnceAsync(TestContext, bicepFileContents, documentUri);
+
+        var codeActions = await helper.Client.RequestCodeAction(new CodeActionParams
+        {
+            TextDocument = new TextDocumentIdentifier(documentUri),
+            Range = diagnosticRange,
+        });
+
+        codeActions.Should().NotBeNull();
+        var createParam = codeActions!.SingleOrDefault(x => x.CodeAction?.Title == $"Create parameter '{missingName}'");
+        createParam.Should().NotBeNull();
+
+        var bicepFile = new LanguageClientFile(documentUri, bicepFileContents);
+        LspRefactoringHelper.ApplyCodeAction(bicepFile, createParam!.CodeAction!)
+            .Should()
+            .HaveSourceText("""
+param sku object
+
+resource st 'Microsoft.Storage/storageAccounts@2022-09-01' = {
+  name: 'st'
+  location: 'westus'
+  sku: sku
 }
 """);
     }

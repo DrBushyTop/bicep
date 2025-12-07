@@ -49,13 +49,6 @@ public class UndefinedSymbolCodeFixProvider : ICodeFixProvider
         var results = new List<CodeFix>();
 
         var allDiagnostics = semanticModel.GetAllDiagnostics();
-
-        // Only offer these fixes when every diagnostic is the undefined-name case.
-        if (allDiagnostics.Any(diag => diag.Code != DiagnosticCode))
-        {
-            return results;
-        }
-
         var diagnostics = allDiagnostics.Where(diag => diag.Code == DiagnosticCode).ToArray();
 
         if (diagnostics.Length == 0 || matchingNodes.Count == 0)
@@ -88,7 +81,7 @@ public class UndefinedSymbolCodeFixProvider : ICodeFixProvider
             var contextualType = NullIfErrorOrAny(semanticModel.GetDeclaredType(variableAccess));
             var declaredAssignmentType = NullIfErrorOrAny(semanticModel.GetDeclaredTypeAssignment(variableAccess)?.Reference.Type);
             var inferredType = NullIfErrorOrAny(semanticModel.GetTypeInfo(variableAccess));
-            var effectiveType = declaredAssignmentType ?? contextualType ?? inferredType;
+            var effectiveType = declaredAssignmentType ?? contextualType ?? inferredType ?? InferByContext(semanticModel, variableAccess);
             var typeString = GetTypeString(effectiveType);
 
             var newline = semanticModel.Configuration.Formatting.Data.NewlineKind.ToEscapeSequence();
@@ -108,14 +101,14 @@ public class UndefinedSymbolCodeFixProvider : ICodeFixProvider
         yield return new CodeFix(
             $"Create parameter '{name}'",
             isPreferred: false,
-            CodeFixKind.QuickFix,
+            CodeFixKind.Refactor,
             new CodeReplacement(new TextSpan(parameterInsertionOffset, 0), $"param {name} {typeString}{newline}{newline}"));
 
         var variableInsertionOffset = FindInsertionOffset(parentStatement, typeof(VariableDeclarationSyntax));
         yield return new CodeFix(
             $"Create variable '{name}'",
             isPreferred: false,
-            CodeFixKind.QuickFix,
+            CodeFixKind.Refactor,
             new CodeReplacement(new TextSpan(variableInsertionOffset, 0), $"var {name} = ''{newline}{newline}"));
     }
 
@@ -156,5 +149,75 @@ public class UndefinedSymbolCodeFixProvider : ICodeFixProvider
 
     private static bool SpansOverlap(int requestStart, int requestEnd, TextSpan span) =>
         requestStart <= span.GetEndPosition() && requestEnd >= span.Position;
+
+    private static TypeSymbol? InferByContext(SemanticModel semanticModel, VariableAccessSyntax variableAccess)
+    {
+        // If used in a conditional/ternary/logical context, assume bool.
+        if (IsBooleanContext(semanticModel, variableAccess))
+        {
+            return LanguageConstants.Bool;
+        }
+
+        // If used in arithmetic, assume int.
+        if (IsArithmeticContext(semanticModel, variableAccess))
+        {
+            return LanguageConstants.Int;
+        }
+
+        // Try to derive from enclosing property type (e.g., resource property).
+        if (semanticModel.Binder.GetParent(variableAccess) is SyntaxBase parent)
+        {
+            var declaredType = semanticModel.GetDeclaredType(parent);
+            if (declaredType is not null && declaredType is not ErrorType && declaredType is not AnyType)
+            {
+                return declaredType;
+            }
+        }
+
+        return null;
+    }
+
+    private static bool IsBooleanContext(SemanticModel model, VariableAccessSyntax access)
+    {
+        SyntaxBase? current = access;
+        while (current is not null)
+        {
+            if (current is TernaryOperationSyntax ternary && ReferenceEquals(ternary.ConditionExpression, access))
+            {
+                return true;
+            }
+            if (current is UnaryOperationSyntax unary && unary.Operator == UnaryOperator.Not)
+            {
+                return true;
+            }
+            if (current is BinaryOperationSyntax binary)
+            {
+                if (binary.Operator is BinaryOperator.LogicalAnd or BinaryOperator.LogicalOr or BinaryOperator.Equals or BinaryOperator.NotEquals or BinaryOperator.LessThan or BinaryOperator.LessThanOrEqual or BinaryOperator.GreaterThan or BinaryOperator.GreaterThanOrEqual)
+                {
+                    return true;
+                }
+            }
+
+            current = model.Binder.GetParent(current);
+        }
+
+        return false;
+    }
+
+    private static bool IsArithmeticContext(SemanticModel model, VariableAccessSyntax access)
+    {
+        SyntaxBase? current = access;
+        while (current is not null)
+        {
+            if (current is BinaryOperationSyntax binary &&
+                binary.Operator is BinaryOperator.Add or BinaryOperator.Subtract or BinaryOperator.Multiply or BinaryOperator.Divide or BinaryOperator.Modulo)
+            {
+                return true;
+            }
+            current = model.Binder.GetParent(current);
+        }
+
+        return false;
+    }
 }
 
