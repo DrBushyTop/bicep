@@ -417,5 +417,210 @@ resource st 'Microsoft.Storage/storageAccounts@2023-01-01' = {
             }
             """);
     }
+
+    [TestMethod]
+    public async Task Undefined_name_used_with_logical_not_operator_should_infer_bool_parameter()
+    {
+        var result = await ApplyUndefinedSymbolCodeFix("""
+            output isDisabled bool = !isEnabled
+            """, "isEnabled", "parameter");
+
+        result.Should().Be("""
+            param isEnabled bool
+
+            output isDisabled bool = !isEnabled
+            """);
+    }
+
+    [TestMethod]
+    public async Task Undefined_name_used_with_logical_and_operator_should_infer_bool_parameter()
+    {
+        var result = await ApplyUndefinedSymbolCodeFix("""
+            param enableFeatureA bool
+
+            output bothEnabled bool = enableFeatureA && enableFeatureB
+            """, "enableFeatureB", "parameter");
+
+        result.Should().Be("""
+            param enableFeatureA bool
+            param enableFeatureB bool
+
+            output bothEnabled bool = enableFeatureA && enableFeatureB
+            """);
+    }
+
+    [TestMethod]
+    public async Task Undefined_name_used_in_string_interpolation_should_infer_string_parameter()
+    {
+        var result = await ApplyUndefinedSymbolCodeFix("""
+            output greeting string = 'Hello, ${userName}!'
+            """, "userName", "parameter");
+
+        result.Should().Be("""
+            param userName string
+
+            output greeting string = 'Hello, ${userName}!'
+            """);
+    }
+
+    [TestMethod]
+    public async Task Undefined_name_used_in_string_interpolation_should_offer_string_variable()
+    {
+        var result = await ApplyUndefinedSymbolCodeFix("""
+            output greeting string = 'Hello, ${userName}!'
+            """, "userName", "variable");
+
+        result.Should().Be("""
+            var userName = ''
+
+            output greeting string = 'Hello, ${userName}!'
+            """);
+    }
+
+    [TestMethod]
+    public async Task Undefined_name_with_typed_string_array_output_should_infer_string_array_parameter()
+    {
+        var result = await ApplyUndefinedSymbolCodeFix("""
+            output items string[] = myStrings
+            """, "myStrings", "parameter");
+
+        result.Should().Be("""
+            param myStrings string[]
+
+            output items string[] = myStrings
+            """);
+    }
+
+    [TestMethod]
+    public async Task Undefined_name_with_typed_int_array_output_should_infer_int_array_parameter()
+    {
+        var result = await ApplyUndefinedSymbolCodeFix("""
+            output nums int[] = myNumbers
+            """, "myNumbers", "parameter");
+
+        result.Should().Be("""
+            param myNumbers int[]
+
+            output nums int[] = myNumbers
+            """);
+    }
+
+    [TestMethod]
+    public async Task Undefined_name_used_in_deeply_nested_resource_property_should_infer_full_path()
+    {
+        var result = await ApplyUndefinedSymbolCodeFix("""
+            resource storageAccount 'Microsoft.Storage/storageAccounts@2023-01-01' = {
+              name: 'mystorageacct123'
+              location: resourceGroup().location
+              sku: {
+                name: 'Standard_LRS'
+              }
+              kind: 'StorageV2'
+              properties: {
+                networkAcls: {
+                  defaultAction: action
+                }
+              }
+            }
+            """, "action", "parameter");
+
+        result.Should().Be("""
+            param action resourceInput<'Microsoft.Storage/storageAccounts@2023-01-01'>.properties.networkAcls.defaultAction
+
+            resource storageAccount 'Microsoft.Storage/storageAccounts@2023-01-01' = {
+              name: 'mystorageacct123'
+              location: resourceGroup().location
+              sku: {
+                name: 'Standard_LRS'
+              }
+              kind: 'StorageV2'
+              properties: {
+                networkAcls: {
+                  defaultAction: action
+                }
+              }
+            }
+            """);
+    }
+
+    [TestMethod]
+    public async Task Undefined_name_used_in_for_loop_should_infer_array_parameter()
+    {
+        var result = await ApplyUndefinedSymbolCodeFix("""
+            resource storageAccounts 'Microsoft.Storage/storageAccounts@2023-01-01' = [for item in myItems: {
+              name: item
+              location: 'westus'
+              sku: {
+                name: 'Standard_LRS'
+              }
+              kind: 'StorageV2'
+            }]
+            """, "myItems", "parameter");
+
+        result.Should().Be("""
+            param myItems array
+
+            resource storageAccounts 'Microsoft.Storage/storageAccounts@2023-01-01' = [for item in myItems: {
+              name: item
+              location: 'westus'
+              sku: {
+                name: 'Standard_LRS'
+              }
+              kind: 'StorageV2'
+            }]
+            """);
+    }
+
+    [TestMethod]
+    public async Task Undefined_name_used_in_resource_name_property_should_infer_resourceInput_name()
+    {
+        var result = await ApplyUndefinedSymbolCodeFix("""
+            resource storageAccount 'Microsoft.Storage/storageAccounts@2023-01-01' = {
+              name: storageAccountName
+              location: 'westus'
+              sku: {
+                name: 'Standard_LRS'
+              }
+              kind: 'StorageV2'
+            }
+            """, "storageAccountName", "parameter");
+
+        result.Should().Be("""
+            param storageAccountName resourceInput<'Microsoft.Storage/storageAccounts@2023-01-01'>.name
+
+            resource storageAccount 'Microsoft.Storage/storageAccounts@2023-01-01' = {
+              name: storageAccountName
+              location: 'westus'
+              sku: {
+                name: 'Standard_LRS'
+              }
+              kind: 'StorageV2'
+            }
+            """);
+    }
+
+    [TestMethod]
+    public async Task Undefined_name_with_nullable_user_defined_type_should_preserve_nullability()
+    {
+        var result = await ApplyUndefinedSymbolCodeFix("""
+            type myType = {
+              name: string
+              count: int
+            }
+
+            output myOutput myType? = myParam
+            """, "myParam", "parameter");
+
+        result.Should().Be("""
+            type myType = {
+              name: string
+              count: int
+            }
+
+            param myParam myType?
+
+            output myOutput myType? = myParam
+            """);
+    }
 }
 

@@ -123,19 +123,51 @@ public class UndefinedSymbolCodeFixProvider : ICodeFixProvider
     private IEnumerable<CodeFix> CreateQuickFixes(StatementSyntax parentStatement, string name, string parameterTypeString, string variableTypeString, TypeSymbol? effectiveType, string newline)
     {
         var parameterInsertionOffset = FindInsertionOffset(parentStatement, typeof(ParameterDeclarationSyntax));
+        var parameterText = BuildDeclarationText(parameterInsertionOffset, $"param {name} {parameterTypeString}", newline);
         yield return new CodeFix(
             $"Create parameter '{name}'",
             isPreferred: false,
             CodeFixKind.QuickFix,
-            new CodeReplacement(new TextSpan(parameterInsertionOffset, 0), $"param {name} {parameterTypeString}{newline}{newline}"));
+            new CodeReplacement(new TextSpan(parameterInsertionOffset, 0), parameterText));
 
         var variableInsertionOffset = FindInsertionOffset(parentStatement, typeof(VariableDeclarationSyntax));
         var defaultInitializer = GetDefaultInitializer(effectiveType);
+        var variableText = BuildDeclarationText(variableInsertionOffset, $"var {name} = {defaultInitializer}", newline);
         yield return new CodeFix(
             $"Create variable '{name}'",
             isPreferred: false,
             CodeFixKind.QuickFix,
-            new CodeReplacement(new TextSpan(variableInsertionOffset, 0), $"var {name} = {defaultInitializer}{newline}{newline}"));
+            new CodeReplacement(new TextSpan(variableInsertionOffset, 0), variableText));
+    }
+
+    private string BuildDeclarationText(int insertionOffset, string declaration, string newline)
+    {
+        // Avoid producing double-blank lines if the insertion point already starts on a blank line.
+        var hasBlankLineAtOffset = IsBlankLineAtOffset(insertionOffset, newline);
+        var spacing = hasBlankLineAtOffset ? newline : newline + newline;
+        return $"{declaration}{spacing}";
+    }
+
+    private bool IsBlankLineAtOffset(int insertionOffset, string newline)
+    {
+        var lineStarts = semanticModel.SourceFile.LineStarts;
+        if (lineStarts.Length == 0 || insertionOffset < 0 || insertionOffset > semanticModel.SourceFile.Text.Length)
+        {
+            return false;
+        }
+
+        var (line, _) = TextCoordinateConverter.GetPosition(lineStarts, insertionOffset);
+        if (line < 0 || line >= lineStarts.Length)
+        {
+            return false;
+        }
+
+        var lineStart = lineStarts[line];
+        var lineEnd = line + 1 < lineStarts.Length ? lineStarts[line + 1] : semanticModel.SourceFile.Text.Length;
+        var lineLength = lineEnd - lineStart;
+
+        // A blank line is one that only contains the newline characters.
+        return lineLength <= newline.Length;
     }
 
     private int FindInsertionOffset(StatementSyntax anchorStatement, Type declarationType)
@@ -308,17 +340,32 @@ public class UndefinedSymbolCodeFixProvider : ICodeFixProvider
 
             switch (current)
             {
-                case OutputDeclarationSyntax outputDecl when outputDecl.Type is TypeVariableAccessSyntax outputTypeAccess:
+                case OutputDeclarationSyntax outputDecl:
                     var outputType = semanticModel.GetDeclaredTypeAssignment(outputDecl)?.Reference.Type;
-                    return TryGetUserDefinedTypeNameFromTypeSyntax(semanticModel, outputTypeAccess, outputType);
+                    if (outputDecl.Type is { } outputTypeSyntax &&
+                        TryGetUserDefinedTypeNameFromTypeSyntax(semanticModel, outputTypeSyntax, outputType) is { } outputAlias)
+                    {
+                        return outputAlias;
+                    }
+                    break;
 
-                case ParameterDeclarationSyntax paramDecl when paramDecl.Type is TypeVariableAccessSyntax paramTypeAccess:
+                case ParameterDeclarationSyntax paramDecl:
                     var paramType = semanticModel.GetDeclaredTypeAssignment(paramDecl)?.Reference.Type;
-                    return TryGetUserDefinedTypeNameFromTypeSyntax(semanticModel, paramTypeAccess, paramType);
+                    if (paramDecl.Type is { } paramTypeSyntax &&
+                        TryGetUserDefinedTypeNameFromTypeSyntax(semanticModel, paramTypeSyntax, paramType) is { } paramAlias)
+                    {
+                        return paramAlias;
+                    }
+                    break;
 
-                case VariableDeclarationSyntax variableDecl when variableDecl.Type is TypeVariableAccessSyntax varTypeAccess:
+                case VariableDeclarationSyntax variableDecl:
                     var varType = semanticModel.GetDeclaredTypeAssignment(variableDecl)?.Reference.Type;
-                    return TryGetUserDefinedTypeNameFromTypeSyntax(semanticModel, varTypeAccess, varType);
+                    if (variableDecl.Type is { } varTypeSyntax &&
+                        TryGetUserDefinedTypeNameFromTypeSyntax(semanticModel, varTypeSyntax, varType) is { } varAlias)
+                    {
+                        return varAlias;
+                    }
+                    break;
 
                 case TypeVariableAccessSyntax typeAccess:
                     return TryGetUserDefinedTypeNameFromTypeSyntax(semanticModel, typeAccess, assignment?.Reference.Type);
@@ -328,7 +375,29 @@ public class UndefinedSymbolCodeFixProvider : ICodeFixProvider
         return null;
     }
 
-    private static string? TryGetUserDefinedTypeNameFromTypeSyntax(SemanticModel semanticModel, TypeVariableAccessSyntax typeAccess, TypeSymbol? typeSymbol)
+    private static string? TryGetUserDefinedTypeNameFromTypeSyntax(SemanticModel semanticModel, SyntaxBase typeSyntax, TypeSymbol? typeSymbol)
+    {
+        if (typeSyntax is null)
+        {
+            return null;
+        }
+
+        return typeSyntax switch
+        {
+            NullableTypeSyntax nullable => TryGetUserDefinedTypeNameFromTypeSyntax(
+                semanticModel,
+                nullable.Base,
+                typeSymbol is null ? null : TypeHelper.TryRemoveNullability(typeSymbol))
+                is { } innerName
+                ? $"{innerName}{((typeSymbol is null || TypeHelper.IsNullable(typeSymbol)) ? "?" : string.Empty)}"
+                : null,
+
+            TypeVariableAccessSyntax typeAccess => TryGetUserDefinedTypeNameFromTypeAccess(semanticModel, typeAccess, typeSymbol),
+            _ => null,
+        };
+    }
+
+    private static string? TryGetUserDefinedTypeNameFromTypeAccess(SemanticModel semanticModel, TypeVariableAccessSyntax typeAccess, TypeSymbol? typeSymbol)
     {
         var symbol = semanticModel.Binder.GetSymbolInfo(typeAccess);
         if (symbol is not TypeAliasSymbol typeAlias)
@@ -357,6 +426,12 @@ public class UndefinedSymbolCodeFixProvider : ICodeFixProvider
         if (IsArithmeticContext(semanticModel, variableAccess))
         {
             return LanguageConstants.Int;
+        }
+
+        // If used as the iterable expression in a for-loop, assume array.
+        if (IsForExpressionContext(semanticModel, variableAccess))
+        {
+            return LanguageConstants.Array;
         }
 
         // Try to derive from enclosing property type (e.g., resource property).
@@ -418,6 +493,24 @@ public class UndefinedSymbolCodeFixProvider : ICodeFixProvider
             {
                 return true;
             }
+            current = model.Binder.GetParent(current);
+        }
+
+        return false;
+    }
+
+    private static bool IsForExpressionContext(SemanticModel model, VariableAccessSyntax access)
+    {
+        SyntaxBase? current = access;
+        while (current is not null)
+        {
+            if (current is ForSyntax forSyntax)
+            {
+                var exprSpan = forSyntax.Expression.Span;
+                return access.Span.Position >= exprSpan.Position &&
+                       access.Span.GetEndPosition() <= exprSpan.GetEndPosition();
+            }
+
             current = model.Binder.GetParent(current);
         }
 
