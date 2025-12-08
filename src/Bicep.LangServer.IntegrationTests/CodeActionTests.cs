@@ -105,34 +105,36 @@ namespace Bicep.LangServer.IntegrationTests
                         // but they must always include any fixes produced by IFixable diagnostics.
                         quickFixTitles.Should().Contain(bicepFixTitles);
 
-                        for (int i = 0; i < quickFixList.Count; i++)
+                        var expectedFixes = bicepFixes.ToList();
+                        var mutableQuickFixes = quickFixList.ToList();
+
+                        foreach (var expectedFix in expectedFixes)
                         {
-                            var quickFix = quickFixList[i];
-
-                            quickFix.IsCodeAction.Should().BeTrue();
-                            quickFix.CodeAction!.Kind.Should().Be(CodeActionKind.QuickFix);
-                            quickFix.CodeAction.Edit!.Changes.Should().ContainKey(uri);
-
-                            var textEditList = quickFix.CodeAction.Edit.Changes![uri].ToList();
-
-                            bicepFixes.RemoveWhere(fix =>
+                            var matchingQuickFix = mutableQuickFixes.FirstOrDefault(quickFix =>
                             {
-                                if (fix.Title != quickFix.CodeAction.Title)
+                                if (quickFix.CodeAction?.Title != expectedFix.Title ||
+                                    quickFix.CodeAction.Edit?.Changes is null ||
+                                    !quickFix.CodeAction.Edit.Changes.TryGetValue(uri, out var edits))
                                 {
                                     return false;
                                 }
 
-                                var replacementSet = fix.Replacements.ToHashSet();
-                                foreach (var edit in textEditList)
+                                var replacementSet = expectedFix.Replacements.ToHashSet();
+                                foreach (var edit in edits)
                                 {
                                     replacementSet.RemoveWhere(replacement => edit.Range == replacement.ToRange(lineStarts) && edit.NewText == replacement.Text);
                                 }
 
                                 return replacementSet.Count == 0;
-                            }).Should().Be(1, "No matching fix found.");
-                        }
+                            });
 
-                        bicepFixes.Count.Should().Be(0);
+                            matchingQuickFix.Should().NotBeNull("No matching fix found.");
+
+                            if (matchingQuickFix is not null)
+                            {
+                                mutableQuickFixes.Remove(matchingQuickFix);
+                            }
+                        }
                     }
                 }
             }

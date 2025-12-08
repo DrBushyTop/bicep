@@ -31,9 +31,15 @@ public partial class CodeActionTests : CodeActionTestBase
         var compilation = Services.BuildCompilation(files, uri);
         var diagnostics = compilation.GetEntrypointSemanticModel().GetAllDiagnostics();
         diagnostics.Should().ContainSingle(d => d.Code == "BCP057");
+        TestContext.WriteLine("Diagnostics: " + string.Join(", ", diagnostics.Select(d =>
+        {
+            var end = d.Span.Position + d.Span.Length;
+            return $"{d.Code}@{d.Span.Position}-{end}";
+        })));
 
         var bcp057 = diagnostics.Single(d => d.Code == "BCP057");
         var diagnosticRange = bcp057.ToRange(compilation.SourceFileGrouping.EntryPoint.LineStarts);
+        TestContext.WriteLine($"Diagnostic range: {diagnosticRange.Start.Line}:{diagnosticRange.Start.Character}-{diagnosticRange.End.Line}:{diagnosticRange.End.Character}");
 
         var helper = await ServerWithBuiltInTypes.GetAsync();
         await helper.OpenFileOnceAsync(TestContext, bicepFileContents, documentUri);
@@ -45,6 +51,7 @@ public partial class CodeActionTests : CodeActionTestBase
         });
 
         codeActions.Should().NotBeNull();
+        TestContext.WriteLine("Returned code actions: " + string.Join(", ", codeActions!.Select(x => x.CodeAction?.Title ?? "<command>")));
         var expectedTitle = actionType == "parameter"
             ? $"Create parameter '{missingName}'"
             : $"Create variable '{missingName}'";
@@ -156,15 +163,45 @@ public partial class CodeActionTests : CodeActionTestBase
             """);
     }
 
-    // NOTE: Tests for resource if-conditions are skipped due to test infrastructure limitations.
-    // The feature works correctly in production (verified manually), but the LSP integration test
-    // infrastructure doesn't properly handle if-conditions in this context.
-    // Manual test case:
-    // resource pe 'Microsoft.Network/privateEndpoints@2025-01-01' = if (enablePrivateEndpoint) {
-    //   name: 'pe'
-    //   location: 'westus'
-    // }
-    // Expected: param enablePrivateEndpoint bool / var enablePrivateEndpoint = false
+    [TestMethod]
+    public async Task Undefined_name_used_in_resource_if_condition_should_infer_bool_parameter()
+    {
+        var result = await ApplyUndefinedSymbolCodeFix("""
+            resource pe 'Microsoft.Network/privateEndpoints@2025-01-01' = if (enablePrivateEndpoint) {
+              name: 'pe'
+              location: 'westus'
+            }
+            """, "enablePrivateEndpoint", "parameter");
+
+        result.Should().Be("""
+            param enablePrivateEndpoint bool
+
+            resource pe 'Microsoft.Network/privateEndpoints@2025-01-01' = if (enablePrivateEndpoint) {
+              name: 'pe'
+              location: 'westus'
+            }
+            """);
+    }
+
+    [TestMethod]
+    public async Task Undefined_name_used_in_resource_if_condition_should_offer_bool_variable()
+    {
+        var result = await ApplyUndefinedSymbolCodeFix("""
+            resource pe 'Microsoft.Network/privateEndpoints@2025-01-01' = if (enablePrivateEndpoint) {
+              name: 'pe'
+              location: 'westus'
+            }
+            """, "enablePrivateEndpoint", "variable");
+
+        result.Should().Be("""
+            var enablePrivateEndpoint = false
+
+            resource pe 'Microsoft.Network/privateEndpoints@2025-01-01' = if (enablePrivateEndpoint) {
+              name: 'pe'
+              location: 'westus'
+            }
+            """);
+    }
 
     [TestMethod]
     public async Task Undefined_name_should_offer_create_variable_with_int_initializer()
@@ -245,10 +282,6 @@ public partial class CodeActionTests : CodeActionTestBase
             output sku StorageSkuType = storageType
             """);
     }
-
-    // TODO: Named type support needs more work to properly track type aliases
-    // [TestMethod]
-    // public async Task Undefined_name_should_offer_create_parameter_with_named_type()
 
     [TestMethod]
     public async Task Undefined_name_should_offer_create_parameter_with_resource_derived_type()

@@ -67,7 +67,7 @@ public class UndefinedSymbolCodeFixProvider : ICodeFixProvider
         if (!variableAccesses.Any())
         {
             var mostSpecificNode = matchingNodes.LastOrDefault();
-            if (mostSpecificNode is StringSyntax or UnaryOperationSyntax or TernaryOperationSyntax)
+            if (mostSpecificNode is { })
             {
                 variableAccesses = SyntaxAggregator.AggregateByType<VariableAccessSyntax>(mostSpecificNode)
                     .Where(variableAccess => diagnostics.Any(diag => SpansOverlap(variableAccess.Span.Position, variableAccess.GetEndPosition(), diag.Span)));
