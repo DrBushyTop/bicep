@@ -269,7 +269,6 @@ param storageAccountName string
 param location string
 param storagesku resourceInput<'Microsoft.Storage/storageAccounts@2023-01-01'>.sku
 
-
 resource st 'Microsoft.Storage/storageAccounts@2023-01-01' = {
   name: storageAccountName
   location: location

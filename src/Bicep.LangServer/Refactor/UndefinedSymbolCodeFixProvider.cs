@@ -10,6 +10,7 @@ using Bicep.Core.Extensions;
 using Bicep.Core.Parsing;
 using Bicep.Core.Semantics;
 using Bicep.Core.Syntax;
+using Bicep.Core.Syntax.Visitors;
 using Bicep.Core.TypeSystem;
 using Bicep.Core.TypeSystem.Types;
 using Bicep.LanguageServer.Completions;
@@ -58,9 +59,25 @@ public class UndefinedSymbolCodeFixProvider : ICodeFixProvider
             return results;
         }
 
-        // Filter to just variable access nodes from the cursor/selection position.
-        // These are the undefined symbols we can offer to create as parameters or variables.
-        var variableAccesses = matchingNodes.OfType<VariableAccessSyntax>();
+        // Collect variable accesses that are within the matching nodes (including descendants).
+        // The LSP handler gives us a set of nodes spanning the requested range; for cases like
+        // string interpolation or unary operators, the VariableAccess may be a descendant, not the node itself.
+        IEnumerable<VariableAccessSyntax> variableAccesses = matchingNodes.OfType<VariableAccessSyntax>();
+
+        if (!variableAccesses.Any())
+        {
+            var mostSpecificNode = matchingNodes.LastOrDefault();
+            if (mostSpecificNode is StringSyntax or UnaryOperationSyntax or TernaryOperationSyntax)
+            {
+                variableAccesses = SyntaxAggregator.AggregateByType<VariableAccessSyntax>(mostSpecificNode)
+                    .Where(variableAccess => diagnostics.Any(diag => SpansOverlap(variableAccess.Span.Position, variableAccess.GetEndPosition(), diag.Span)));
+            }
+            else
+            {
+                variableAccesses = Array.Empty<VariableAccessSyntax>();
+            }
+        }
+
         HashSet<string> seen = new(StringComparer.Ordinal);
 
         foreach (var variableAccess in variableAccesses)
@@ -142,32 +159,52 @@ public class UndefinedSymbolCodeFixProvider : ICodeFixProvider
 
     private string BuildDeclarationText(int insertionOffset, string declaration, string newline)
     {
-        // Avoid producing double-blank lines if the insertion point already starts on a blank line.
-        var hasBlankLineAtOffset = IsBlankLineAtOffset(insertionOffset, newline);
-        var spacing = hasBlankLineAtOffset ? newline : newline + newline;
+        var existingNewlines = CountConsecutiveNewlinesAtOffset(insertionOffset, newline);
+
+        // Target spacing: one blank line after the declaration (2 newlines total).
+        // If we're already on a blank line, add just enough to separate cleanly.
+        var totalDesiredNewlines = 2;
+        var additionalNewlines = Math.Max(totalDesiredNewlines - existingNewlines, 1);
+        var spacing = string.Concat(Enumerable.Repeat(newline, additionalNewlines));
+
         return $"{declaration}{spacing}";
     }
 
-    private bool IsBlankLineAtOffset(int insertionOffset, string newline)
+    private int CountConsecutiveNewlinesAtOffset(int insertionOffset, string newline)
     {
         var lineStarts = semanticModel.SourceFile.LineStarts;
         if (lineStarts.Length == 0 || insertionOffset < 0 || insertionOffset > semanticModel.SourceFile.Text.Length)
         {
-            return false;
+            return 0;
         }
 
         var (line, _) = TextCoordinateConverter.GetPosition(lineStarts, insertionOffset);
         if (line < 0 || line >= lineStarts.Length)
         {
-            return false;
+            return 0;
         }
 
         var lineStart = lineStarts[line];
         var lineEnd = line + 1 < lineStarts.Length ? lineStarts[line + 1] : semanticModel.SourceFile.Text.Length;
         var lineLength = lineEnd - lineStart;
 
-        // A blank line is one that only contains the newline characters.
-        return lineLength <= newline.Length;
+        // Count consecutive newline sequences starting at the offset.
+        if (lineLength > newline.Length || lineEnd + newline.Length > semanticModel.SourceFile.Text.Length)
+        {
+            // Not a blank line or at end of file.
+            return 0;
+        }
+
+        var text = semanticModel.SourceFile.Text;
+        var count = 0;
+        var cursor = insertionOffset;
+        while (cursor + newline.Length <= text.Length && text.AsSpan(cursor).StartsWith(newline, StringComparison.Ordinal))
+        {
+            count++;
+            cursor += newline.Length;
+        }
+
+        return count;
     }
 
     private int FindInsertionOffset(StatementSyntax anchorStatement, Type declarationType)
@@ -428,6 +465,12 @@ public class UndefinedSymbolCodeFixProvider : ICodeFixProvider
             return LanguageConstants.Int;
         }
 
+        // If used inside string interpolation, assume string.
+        if (IsStringInterpolationContext(semanticModel, variableAccess))
+        {
+            return LanguageConstants.String;
+        }
+
         // If used as the iterable expression in a for-loop, assume array.
         if (IsForExpressionContext(semanticModel, variableAccess))
         {
@@ -493,6 +536,22 @@ public class UndefinedSymbolCodeFixProvider : ICodeFixProvider
             {
                 return true;
             }
+            current = model.Binder.GetParent(current);
+        }
+
+        return false;
+    }
+
+    private static bool IsStringInterpolationContext(SemanticModel model, VariableAccessSyntax access)
+    {
+        SyntaxBase? current = access;
+        while (current is not null)
+        {
+            if (current is StringSyntax stringSyntax && stringSyntax.Expressions.Contains(access))
+            {
+                return true;
+            }
+
             current = model.Binder.GetParent(current);
         }
 
