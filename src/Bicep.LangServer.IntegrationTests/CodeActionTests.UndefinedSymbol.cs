@@ -63,7 +63,7 @@ public partial class CodeActionTests : CodeActionTestBase
     }
 
     [TestMethod]
-    public async Task Undefined_name_should_offer_create_parameter_and_variable_quick_fixes()
+    public async Task UndefinedNameShouldOfferCreateParameterAndVariableQuickFixes()
     {
         const string missingName = "storageAccountName";
         var bicepFileContents = $"output out string = {missingName}";
@@ -120,7 +120,7 @@ public partial class CodeActionTests : CodeActionTestBase
     }
 
     [TestMethod]
-    public async Task Undefined_name_used_in_condition_should_infer_bool_parameter()
+    public async Task UndefinedNameUsedInConditionShouldInferBoolParameter()
     {
         var result = await ApplyUndefinedSymbolCodeFix("""
             resource st 'Microsoft.Storage/storageAccounts@2022-09-01' = {
@@ -142,7 +142,7 @@ public partial class CodeActionTests : CodeActionTestBase
     }
 
     [TestMethod]
-    public async Task Undefined_name_should_offer_create_variable_with_bool_initializer()
+    public async Task UndefinedNameShouldOfferCreateVariableWithBoolInitializer()
     {
         var result = await ApplyUndefinedSymbolCodeFix("""
             resource st 'Microsoft.Storage/storageAccounts@2022-09-01' = {
@@ -164,7 +164,7 @@ public partial class CodeActionTests : CodeActionTestBase
     }
 
     [TestMethod]
-    public async Task Undefined_name_used_in_resource_if_condition_should_infer_bool_parameter()
+    public async Task UndefinedNameUsedInResourceIfConditionShouldInferBoolParameter()
     {
         var result = await ApplyUndefinedSymbolCodeFix("""
             resource pe 'Microsoft.Network/privateEndpoints@2025-01-01' = if (enablePrivateEndpoint) {
@@ -184,7 +184,7 @@ public partial class CodeActionTests : CodeActionTestBase
     }
 
     [TestMethod]
-    public async Task Undefined_name_used_in_resource_if_condition_should_offer_bool_variable()
+    public async Task UndefinedNameUsedInResourceIfConditionShouldOfferBoolVariable()
     {
         var result = await ApplyUndefinedSymbolCodeFix("""
             resource pe 'Microsoft.Network/privateEndpoints@2025-01-01' = if (enablePrivateEndpoint) {
@@ -204,7 +204,7 @@ public partial class CodeActionTests : CodeActionTestBase
     }
 
     [TestMethod]
-    public async Task Undefined_name_should_offer_create_variable_with_int_initializer()
+    public async Task UndefinedNameShouldOfferCreateVariableWithIntInitializer()
     {
         var result = await ApplyUndefinedSymbolCodeFix("""
             output total int = replicas + 2
@@ -218,7 +218,7 @@ public partial class CodeActionTests : CodeActionTestBase
     }
 
     [TestMethod]
-    public async Task Undefined_name_should_offer_create_variable_with_object_initializer()
+    public async Task UndefinedNameShouldOfferCreateVariableWithObjectInitializer()
     {
         var result = await ApplyUndefinedSymbolCodeFix("""
             resource st 'Microsoft.Storage/storageAccounts@2022-09-01' = {
@@ -240,7 +240,7 @@ public partial class CodeActionTests : CodeActionTestBase
     }
 
     [TestMethod]
-    public async Task Undefined_name_should_offer_create_variable_with_typed_object_properties()
+    public async Task UndefinedNameShouldOfferCreateVariableWithTypedObjectProperties()
     {
         var result = await ApplyUndefinedSymbolCodeFix("""
             type ConfigType = {
@@ -266,7 +266,7 @@ public partial class CodeActionTests : CodeActionTestBase
     }
 
     [TestMethod]
-    public async Task Undefined_name_should_offer_create_variable_with_union_type_initializer()
+    public async Task UndefinedNameShouldOfferCreateVariableWithUnionTypeInitializer()
     {
         var result = await ApplyUndefinedSymbolCodeFix("""
             type StorageSkuType = 'Standard_LRS' | 'Standard_GRS' | 'Premium_LRS'
@@ -284,7 +284,7 @@ public partial class CodeActionTests : CodeActionTestBase
     }
 
     [TestMethod]
-    public async Task Undefined_name_should_offer_create_parameter_with_resource_derived_type()
+    public async Task UndefinedNameShouldOfferCreateParameterWithResourceDerivedType()
     {
         var result = await ApplyUndefinedSymbolCodeFix("""
 param storageAccountName string
@@ -311,7 +311,7 @@ resource st 'Microsoft.Storage/storageAccounts@2023-01-01' = {
     }
 
     [TestMethod]
-    public async Task Undefined_name_should_offer_create_variable_with_array_initializer()
+    public async Task UndefinedNameShouldOfferCreateVariableWithArrayInitializer()
     {
         var result = await ApplyUndefinedSymbolCodeFix("""
             output out array = myItems
@@ -325,7 +325,7 @@ resource st 'Microsoft.Storage/storageAccounts@2023-01-01' = {
     }
 
     [TestMethod]
-    public async Task Undefined_name_used_in_arithmetic_should_infer_int_parameter()
+    public async Task UndefinedNameUsedInArithmeticShouldInferIntParameter()
     {
         var result = await ApplyUndefinedSymbolCodeFix("""
             output total int = replicas + 2
@@ -339,7 +339,7 @@ resource st 'Microsoft.Storage/storageAccounts@2023-01-01' = {
     }
 
     [TestMethod]
-    public async Task Undefined_name_used_in_output_with_user_defined_type_should_infer_named_type_parameter()
+    public async Task UndefinedNameUsedInOutputWithUserDefinedTypeShouldInferNamedTypeParameter()
     {
         var result = await ApplyUndefinedSymbolCodeFix("""
             type myType = {
@@ -363,7 +363,7 @@ resource st 'Microsoft.Storage/storageAccounts@2023-01-01' = {
     }
 
     [TestMethod]
-    public async Task Undefined_name_used_in_output_with_user_defined_type_should_offer_variable_with_typed_object_initializer()
+    public async Task UndefinedNameUsedInOutputWithUserDefinedTypeShouldOfferVariableWithTypedObjectInitializer()
     {
         var result = await ApplyUndefinedSymbolCodeFix("""
             type myType = {
@@ -387,7 +387,7 @@ resource st 'Microsoft.Storage/storageAccounts@2023-01-01' = {
     }
 
     [TestMethod]
-    public async Task Undefined_name_used_in_resource_should_infer_resourceInput_parameter()
+    public async Task UndefinedNameUsedInResourceShouldInferResourceInputParameter()
     {
         var result = await ApplyUndefinedSymbolCodeFix("""
             resource storageAccount 'Microsoft.Storage/storageAccounts@2023-01-01' = {
@@ -417,7 +417,7 @@ resource st 'Microsoft.Storage/storageAccounts@2023-01-01' = {
     }
 
     [TestMethod]
-    public async Task Undefined_name_used_in_nested_resource_properties_should_infer_resourceInput_parameter()
+    public async Task UndefinedNameUsedInNestedResourcePropertiesShouldInferResourceInputParameter()
     {
         var result = await ApplyUndefinedSymbolCodeFix("""
             resource storageAccount 'Microsoft.Storage/storageAccounts@2023-01-01' = {
@@ -451,7 +451,7 @@ resource st 'Microsoft.Storage/storageAccounts@2023-01-01' = {
     }
 
     [TestMethod]
-    public async Task Undefined_name_used_with_logical_not_operator_should_infer_bool_parameter()
+    public async Task UndefinedNameUsedWithLogicalNotOperatorShouldInferBoolParameter()
     {
         var result = await ApplyUndefinedSymbolCodeFix("""
             output isDisabled bool = !isEnabled
@@ -465,7 +465,7 @@ resource st 'Microsoft.Storage/storageAccounts@2023-01-01' = {
     }
 
     [TestMethod]
-    public async Task Undefined_name_used_with_logical_and_operator_should_infer_bool_parameter()
+    public async Task UndefinedNameUsedWithLogicalAndOperatorShouldInferBoolParameter()
     {
         var result = await ApplyUndefinedSymbolCodeFix("""
             param enableFeatureA bool
@@ -482,7 +482,7 @@ resource st 'Microsoft.Storage/storageAccounts@2023-01-01' = {
     }
 
     [TestMethod]
-    public async Task Undefined_name_used_in_string_interpolation_should_infer_string_parameter()
+    public async Task UndefinedNameUsedInStringInterpolationShouldInferStringParameter()
     {
         var result = await ApplyUndefinedSymbolCodeFix("""
             output greeting string = 'Hello, ${userName}!'
@@ -496,7 +496,7 @@ resource st 'Microsoft.Storage/storageAccounts@2023-01-01' = {
     }
 
     [TestMethod]
-    public async Task Undefined_name_used_in_string_interpolation_should_offer_string_variable()
+    public async Task UndefinedNameUsedInStringInterpolationShouldOfferStringVariable()
     {
         var result = await ApplyUndefinedSymbolCodeFix("""
             output greeting string = 'Hello, ${userName}!'
@@ -510,7 +510,7 @@ resource st 'Microsoft.Storage/storageAccounts@2023-01-01' = {
     }
 
     [TestMethod]
-    public async Task Undefined_name_with_typed_string_array_output_should_infer_string_array_parameter()
+    public async Task UndefinedNameWithTypedStringArrayOutputShouldInferStringArrayParameter()
     {
         var result = await ApplyUndefinedSymbolCodeFix("""
             output items string[] = myStrings
@@ -524,7 +524,7 @@ resource st 'Microsoft.Storage/storageAccounts@2023-01-01' = {
     }
 
     [TestMethod]
-    public async Task Undefined_name_with_typed_int_array_output_should_infer_int_array_parameter()
+    public async Task UndefinedNameWithTypedIntArrayOutputShouldInferIntArrayParameter()
     {
         var result = await ApplyUndefinedSymbolCodeFix("""
             output nums int[] = myNumbers
@@ -538,7 +538,7 @@ resource st 'Microsoft.Storage/storageAccounts@2023-01-01' = {
     }
 
     [TestMethod]
-    public async Task Undefined_name_used_in_deeply_nested_resource_property_should_infer_full_path()
+    public async Task UndefinedNameUsedInDeeplyNestedResourcePropertyShouldInferFullPath()
     {
         var result = await ApplyUndefinedSymbolCodeFix("""
             resource storageAccount 'Microsoft.Storage/storageAccounts@2023-01-01' = {
@@ -576,7 +576,7 @@ resource st 'Microsoft.Storage/storageAccounts@2023-01-01' = {
     }
 
     [TestMethod]
-    public async Task Undefined_name_used_in_for_loop_should_infer_array_parameter()
+    public async Task UndefinedNameUsedInForLoopShouldInferArrayParameter()
     {
         var result = await ApplyUndefinedSymbolCodeFix("""
             resource storageAccounts 'Microsoft.Storage/storageAccounts@2023-01-01' = [for item in myItems: {
@@ -604,7 +604,7 @@ resource st 'Microsoft.Storage/storageAccounts@2023-01-01' = {
     }
 
     [TestMethod]
-    public async Task Undefined_name_used_in_resource_name_property_should_infer_resourceInput_name()
+    public async Task UndefinedNameUsedInResourceNamePropertyShouldInferResourceInputName()
     {
         var result = await ApplyUndefinedSymbolCodeFix("""
             resource storageAccount 'Microsoft.Storage/storageAccounts@2023-01-01' = {
@@ -632,7 +632,7 @@ resource st 'Microsoft.Storage/storageAccounts@2023-01-01' = {
     }
 
     [TestMethod]
-    public async Task Undefined_name_with_nullable_user_defined_type_should_preserve_nullability()
+    public async Task UndefinedNameWithNullableUserDefinedTypeShouldPreserveNullability()
     {
         var result = await ApplyUndefinedSymbolCodeFix("""
             type myType = {
