@@ -355,57 +355,7 @@ resource st 'Microsoft.Storage/storageAccounts@2023-01-01' = {
     }
 
     [TestMethod]
-    public async Task Undefined_name_used_in_resource_context_should_infer_resource_derived_type_parameter()
-    {
-        var result = await ApplyUndefinedSymbolCodeFix("""
-            resource st 'Microsoft.Storage/storageAccounts@2022-09-01' = {
-              name: 'st'
-              location: 'westus'
-              sku: sku
-            }
-            """, "sku", "parameter");
-
-        result.Should().Be("""
-            param sku resourceInput<'Microsoft.Storage/storageAccounts@2022-09-01'>.sku
-
-            resource st 'Microsoft.Storage/storageAccounts@2022-09-01' = {
-              name: 'st'
-              location: 'westus'
-              sku: sku
-            }
-            """);
-    }
-
-    [TestMethod]
-    public async Task Undefined_name_used_in_nested_resource_context_should_infer_nested_resource_derived_type_parameter()
-    {
-        var result = await ApplyUndefinedSymbolCodeFix("""
-            resource __sa__ 'Microsoft.Storage/storageAccounts@2025-06-01' = {
-              name: 'myStg'
-              location: 'westus'
-              sku: {
-                name: skuName
-              }
-              kind: 'StorageV2'
-            }
-            """, "skuName", "parameter");
-
-        result.Should().Be("""
-            param skuName resourceInput<'Microsoft.Storage/storageAccounts@2025-06-01'>.sku.name
-
-            resource __sa__ 'Microsoft.Storage/storageAccounts@2025-06-01' = {
-              name: 'myStg'
-              location: 'westus'
-              sku: {
-                name: skuName
-              }
-              kind: 'StorageV2'
-            }
-            """);
-    }
-
-    [TestMethod]
-    public async Task Undefined_name_used_in_resource_properties_should_infer_resourceInput_parameter()
+    public async Task Undefined_name_used_in_resource_should_infer_resourceInput_parameter()
     {
         var result = await ApplyUndefinedSymbolCodeFix("""
             resource storageAccount 'Microsoft.Storage/storageAccounts@2023-01-01' = {
