@@ -104,7 +104,7 @@ public class UndefinedSymbolCodeFixProvider : ICodeFixProvider
             {
                 // No clear usage context - try resource-derived or complex types
                 parameterTypeString = TryGetResourceInputTypeString(semanticModel, variableAccess)
-                    ?? TryGetUserDefinedTypeName(semanticModel, declaredAssignment)
+                    ?? TryGetUserDefinedTypeName(semanticModel, variableAccess, declaredAssignment)
                     ?? GetTypeString(effectiveType);
             }
 
@@ -288,66 +288,56 @@ public class UndefinedSymbolCodeFixProvider : ICodeFixProvider
         return null;
     }
 
-    private static string? TryGetUserDefinedTypeName(SemanticModel semanticModel, DeclaredTypeAssignment? assignment)
+    private static string? TryGetUserDefinedTypeName(SemanticModel semanticModel, VariableAccessSyntax variableAccess, DeclaredTypeAssignment? assignment)
     {
-        if (assignment is null)
+        // If we already have a declared assignment with a type alias, prefer it
+        if (assignment?.DeclaringSyntax is TypeVariableAccessSyntax declaredTypeAccess)
+        {
+            var declaredType = assignment.Reference.Type;
+            if (TryGetUserDefinedTypeNameFromTypeSyntax(semanticModel, declaredTypeAccess, declaredType) is { } declaredTypeName)
+            {
+                return declaredTypeName;
+            }
+        }
+
+        // Walk up from the variable access to find a parent declaration that carries a type alias
+        SyntaxBase? current = variableAccess;
+        while (current is not null)
+        {
+            current = semanticModel.Binder.GetParent(current);
+
+            switch (current)
+            {
+                case OutputDeclarationSyntax outputDecl when outputDecl.Type is TypeVariableAccessSyntax outputTypeAccess:
+                    var outputType = semanticModel.GetDeclaredTypeAssignment(outputDecl)?.Reference.Type;
+                    return TryGetUserDefinedTypeNameFromTypeSyntax(semanticModel, outputTypeAccess, outputType);
+
+                case ParameterDeclarationSyntax paramDecl when paramDecl.Type is TypeVariableAccessSyntax paramTypeAccess:
+                    var paramType = semanticModel.GetDeclaredTypeAssignment(paramDecl)?.Reference.Type;
+                    return TryGetUserDefinedTypeNameFromTypeSyntax(semanticModel, paramTypeAccess, paramType);
+
+                case VariableDeclarationSyntax variableDecl when variableDecl.Type is TypeVariableAccessSyntax varTypeAccess:
+                    var varType = semanticModel.GetDeclaredTypeAssignment(variableDecl)?.Reference.Type;
+                    return TryGetUserDefinedTypeNameFromTypeSyntax(semanticModel, varTypeAccess, varType);
+
+                case TypeVariableAccessSyntax typeAccess:
+                    return TryGetUserDefinedTypeNameFromTypeSyntax(semanticModel, typeAccess, assignment?.Reference.Type);
+            }
+        }
+
+        return null;
+    }
+
+    private static string? TryGetUserDefinedTypeNameFromTypeSyntax(SemanticModel semanticModel, TypeVariableAccessSyntax typeAccess, TypeSymbol? typeSymbol)
+    {
+        var symbol = semanticModel.Binder.GetSymbolInfo(typeAccess);
+        if (symbol is not TypeAliasSymbol typeAlias)
         {
             return null;
         }
 
-        // Check if the declaring syntax is a type variable access that references a type alias
-        if (assignment.DeclaringSyntax is TypeVariableAccessSyntax typeVarAccess)
-        {
-            var symbol = semanticModel.Binder.GetSymbolInfo(typeVarAccess);
-            if (symbol is TypeAliasSymbol typeAlias)
-            {
-                // Check for nullability
-                var isNullable = TypeHelper.IsNullable(assignment.Reference.Type);
-                return isNullable ? $"{typeAlias.Name}?" : typeAlias.Name;
-            }
-        }
-
-        // For output declarations and other cases, search the ancestor tree for statements
-        // that might have type annotations
-        SyntaxBase? current = assignment.DeclaringSyntax;
-        while (current is not null)
-        {
-            // Check for output/parameter/variable declarations with type annotations
-            if (current is OutputDeclarationSyntax outputDecl && outputDecl.Type is TypeVariableAccessSyntax outputTypeAccess)
-            {
-                var symbol = semanticModel.Binder.GetSymbolInfo(outputTypeAccess);
-                if (symbol is TypeAliasSymbol typeAlias)
-                {
-                    var isNullable = TypeHelper.IsNullable(assignment.Reference.Type);
-                    return isNullable ? $"{typeAlias.Name}?" : typeAlias.Name;
-                }
-            }
-
-            if (current is ParameterDeclarationSyntax paramDecl && paramDecl.Type is TypeVariableAccessSyntax paramTypeAccess)
-            {
-                var symbol = semanticModel.Binder.GetSymbolInfo(paramTypeAccess);
-                if (symbol is TypeAliasSymbol typeAlias)
-                {
-                    var isNullable = TypeHelper.IsNullable(assignment.Reference.Type);
-                    return isNullable ? $"{typeAlias.Name}?" : typeAlias.Name;
-                }
-            }
-
-            // Also check for TypeVariableAccessSyntax in the current node itself
-            if (current is TypeVariableAccessSyntax typeAccess)
-            {
-                var symbol = semanticModel.Binder.GetSymbolInfo(typeAccess);
-                if (symbol is TypeAliasSymbol typeAlias)
-                {
-                    var isNullable = TypeHelper.IsNullable(assignment.Reference.Type);
-                    return isNullable ? $"{typeAlias.Name}?" : typeAlias.Name;
-                }
-            }
-
-            current = semanticModel.Binder.GetParent(current);
-        }
-
-        return null;
+        var isNullable = typeSymbol is not null && TypeHelper.IsNullable(typeSymbol);
+        return isNullable ? $"{typeAlias.Name}?" : typeAlias.Name;
     }
 
     private static TypeSymbol? NullIfErrorOrAny(TypeSymbol? type) => type is ErrorType or AnyType ? null : type;
