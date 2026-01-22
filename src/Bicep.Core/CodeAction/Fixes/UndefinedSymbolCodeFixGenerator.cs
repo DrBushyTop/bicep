@@ -1,6 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+using Bicep.Core.CodeAction;
 using Bicep.Core.Extensions;
 using Bicep.Core.Navigation;
 using Bicep.Core.Parsing;
@@ -98,7 +99,11 @@ public static class UndefinedSymbolCodeFixGenerator
         string parameterTypeString,
         TypeSymbol? effectiveType)
     {
-        var parameterInsertionOffset = FindInsertionOffset(semanticModel, parentStatement, typeof(ParameterDeclarationSyntax));
+        var (parameterInsertionOffset, _, _) = DeclarationInsertionHelper.FindOffsetToInsertNewDeclaration(
+            semanticModel.SourceFile,
+            parentStatement,
+            parentStatement.Span.Position,
+            typeof(ParameterDeclarationSyntax));
         var parameterText = BuildDeclarationText(
             semanticModel,
             prettyPrintContext,
@@ -110,7 +115,11 @@ public static class UndefinedSymbolCodeFixGenerator
             CodeFixKind.QuickFix,
             new CodeReplacement(new TextSpan(parameterInsertionOffset, 0), parameterText));
 
-        var variableInsertionOffset = FindInsertionOffset(semanticModel, parentStatement, typeof(VariableDeclarationSyntax));
+        var (variableInsertionOffset, _, _) = DeclarationInsertionHelper.FindOffsetToInsertNewDeclaration(
+            semanticModel.SourceFile,
+            parentStatement,
+            parentStatement.Span.Position,
+            typeof(VariableDeclarationSyntax));
         var defaultInitializer = GetDefaultInitializer(effectiveType);
         var variableDeclaration = SyntaxFactory.CreateVariableDeclaration(name, defaultInitializer);
         var variableText = BuildDeclarationText(
@@ -178,34 +187,6 @@ public static class UndefinedSymbolCodeFixGenerator
         }
 
         return count;
-    }
-
-    /// <summary>
-    /// Finds optimal insertion point for a new declaration.
-    /// Inserts after existing declarations of the same type, or before the anchor
-    /// statement if no prior declarations of that type exist.
-    /// </summary>
-    private static int FindInsertionOffset(SemanticModel semanticModel, StatementSyntax anchorStatement, Type declarationType)
-    {
-        var sourceFile = semanticModel.SourceFile;
-        var lineStarts = sourceFile.LineStarts;
-
-        var existing = sourceFile.ProgramSyntax.Children.OfType<StatementSyntax>()
-            .Where(s => s.GetType() == declarationType && s.Span.Position < anchorStatement.Span.Position)
-            .OrderByDescending(s => s.Span.Position)
-            .FirstOrDefault();
-
-        if (existing is { })
-        {
-            var insertLine = TextCoordinateConverter.GetPosition(lineStarts, existing.GetEndPosition()).line + 1;
-            return TextCoordinateConverter.GetOffset(lineStarts, insertLine, 0);
-        }
-
-        var anchorStartLine = StatementLineHelper.GetFirstLineOfStatementIncludingComments(
-            lineStarts,
-            sourceFile.ProgramSyntax,
-            anchorStatement);
-        return TextCoordinateConverter.GetOffset(lineStarts, anchorStartLine, 0);
     }
 
     private static string GetTypeString(TypeSymbol? type)
