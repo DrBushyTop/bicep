@@ -352,7 +352,7 @@ namespace Bicep.Core.Semantics
 
                 if (diagnosticLine == 0 || !diagnostic.CanBeSuppressed())
                 {
-                    filteredDiagnostics.Add(AugmentWithUndefinedSymbolFixes(diagnostic));
+                    filteredDiagnostics.Add(AugmentDiagnostic(diagnostic));
                     continue;
                 }
 
@@ -362,15 +362,26 @@ namespace Bicep.Core.Semantics
                     continue;
                 }
 
-                filteredDiagnostics.Add(AugmentWithUndefinedSymbolFixes(diagnostic));
+                filteredDiagnostics.Add(AugmentDiagnostic(diagnostic));
             }
 
             return [.. filteredDiagnostics];
         }
 
         /// <summary>
-        /// Augments BCP057 (undefined symbol) diagnostics with code fixes to create parameters or variables.
+        /// Applies any diagnostic enrichments that require full semantic context
+        /// (for example, attaching code fixes) before diagnostics are surfaced
+        /// outside of the core compiler.
         /// </summary>
+        private IDiagnostic AugmentDiagnostic(IDiagnostic diagnostic) => diagnostic.Code switch
+        {
+            // BCP057 (undefined symbol) quick fixes depend on semantic information
+            // such as type inference and declaration insertion points, which are
+            // only available once the semantic model has been fully constructed.
+            "BCP057" => AugmentWithUndefinedSymbolFixes(diagnostic),
+            _ => diagnostic,
+        };
+
         private IDiagnostic AugmentWithUndefinedSymbolFixes(IDiagnostic diagnostic)
         {
             // Only augment BCP057 diagnostics that don't already have fixes
