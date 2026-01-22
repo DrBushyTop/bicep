@@ -569,7 +569,9 @@ public static class UndefinedSymbolCodeFixGenerator
     /// <summary>
     /// Infers type from usage context when the semantic model doesn't provide one.
     /// Checks (in order): comparison with literals, boolean context, arithmetic,
-    /// string interpolation, for-loop iteration, and parent property type.
+    /// string interpolation, for-loop iteration, and then walks ancestor nodes
+    /// looking for a non-error declared type (e.g., enclosing output/variable/parameter
+    /// declaration or function argument type).
     /// </summary>
     private static TypeSymbol? InferByContext(SemanticModel semanticModel, VariableAccessSyntax variableAccess)
     {
@@ -602,14 +604,19 @@ public static class UndefinedSymbolCodeFixGenerator
             return LanguageConstants.Array;
         }
 
-        // Try to derive from enclosing property type (e.g., resource property).
-        if (semanticModel.Binder.GetParent(variableAccess) is SyntaxBase parent)
+        // Walk ancestors to find a non-error declared type that applies to this
+        // expression position, handling cases where the access is wrapped in
+        // neutral syntax nodes (e.g., parentheses).
+        SyntaxBase? current = semanticModel.Binder.GetParent(variableAccess);
+        while (current is not null)
         {
-            var declaredType = semanticModel.GetDeclaredType(parent);
-            if (declaredType is not null && declaredType is not ErrorType && declaredType is not AnyType)
+            var declaredType = NullIfErrorOrAny(semanticModel.GetDeclaredType(current));
+            if (declaredType is not null)
             {
                 return declaredType;
             }
+
+            current = semanticModel.Binder.GetParent(current);
         }
 
         return null;

@@ -234,4 +234,29 @@ public class UndefinedSymbolCodeFixGeneratorTests
             }
         }
     }
+
+    [TestMethod]
+    public void UndefinedSymbolInParenthesizedOutput_ShouldInferOuterDeclaredType()
+    {
+        var (file, cursor) = ParserHelper.GetFileWithSingleCursor("""
+            output out int = (|missingName)
+            """);
+
+        var result = CompilationHelper.Compile(file);
+
+        using (new AssertionScope().WithVisualCursor(result.Compilation.GetEntrypointSemanticModel().SourceFile, cursor))
+        {
+            var diagnostic = result.Diagnostics
+                .Where(x => x.Code == "BCP057")
+                .Where(x => x.Span.ContainsInclusive(cursor))
+                .Single();
+
+            var fix = diagnostic.Fixes.Single(x => x.Title == "Create parameter 'missingName'");
+            fix.Kind.Should().Be(CodeFixKind.QuickFix);
+
+            // The parameter type should be inferred from the enclosing output declaration (int),
+            // even though the access is wrapped in a parenthesized expression.
+            fix.Replacements.Single().Text.Should().Contain("param missingName int");
+        }
+    }
 }
