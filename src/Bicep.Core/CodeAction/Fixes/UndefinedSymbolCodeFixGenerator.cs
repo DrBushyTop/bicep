@@ -245,11 +245,10 @@ public static class UndefinedSymbolCodeFixGenerator
 
     private static string GetTypeString(TypeSymbol? type)
     {
-        // When we cannot infer a meaningful type, fall back to "string" rather than
-        // emitting an opaque helper type like "object? /* unknown */". This matches
-        // user expectations better for simple cases like:
-        //   output out string = missingName
-        // where we want:   param missingName string
+        // When we cannot infer a meaningful type at all, fall back to "string"
+        // rather than emitting an opaque helper type like "object? /* unknown */".
+        // This gives a simple, editable scalar in cases where context didn't
+        // provide a better type.
         if (type is null or ErrorType or AnyType)
         {
             return LanguageConstants.String.Name;
