@@ -287,7 +287,7 @@ public static class UndefinedSymbolCodeFixGenerator
         visitedTypes = [.. visitedTypes, objectType];
 
         var properties = writeableProperties
-            .Select(p => CreateObjectPropertySyntax(p.Name, GetDefaultInitializerCore(p.TypeReference.Type, visitedTypes)));
+            .Select(p => SyntaxFactory.CreateObjectProperty(p.Name, GetDefaultInitializerCore(p.TypeReference.Type, visitedTypes)));
 
         return SyntaxFactory.CreateObject(properties);
     }
@@ -297,19 +297,6 @@ public static class UndefinedSymbolCodeFixGenerator
         // For unions, try to pick a reasonable default from the first non-null member
         var firstNonNullMember = union.Members.FirstOrDefault(m => m.Type is not NullType)?.Type;
         return firstNonNullMember is not null ? GetDefaultInitializerCore(firstNonNullMember, visitedTypes) : SyntaxFactory.CreateNullLiteral();
-    }
-
-    private static ObjectPropertySyntax CreateObjectPropertySyntax(string name, SyntaxBase value)
-    {
-        SyntaxBase keySyntax = StringUtils.IsPropertyNameEscapingRequired(name)
-            ? SyntaxFactory.CreateStringLiteral(name)
-            : SyntaxFactory.CreateIdentifier(name);
-
-        var colonToken = value is SkippedTriviaSyntax
-            ? SyntaxFactory.CreateToken(TokenType.Colon, SyntaxFactory.EmptyTrivia)
-            : SyntaxFactory.CreateToken(TokenType.Colon, SyntaxFactory.EmptyTrivia, SyntaxFactory.SingleSpaceTrivia);
-
-        return new ObjectPropertySyntax(keySyntax, colonToken, value);
     }
 
     /// <summary>
