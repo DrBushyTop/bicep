@@ -127,7 +127,6 @@ namespace Bicep.LanguageServer.Handlers
             ICodeFixProvider[] providers = [
                 .. GetDecoratorCodeFixProviders(model),
                 new ExpressionAndTypeExtractor(model),
-                new UndefinedSymbolCodeFixProvider(model),
                 new MultilineStringCodeFixProvider(),
             ];
 

@@ -1,15 +1,12 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-using System.Diagnostics;
-using Bicep.Core;
 using Bicep.Core.Parsing;
 using Bicep.Core.Semantics;
 using Bicep.Core.Syntax;
-using Bicep.Core.TypeSystem;
 using Bicep.Core.TypeSystem.Types;
 
-namespace Bicep.LanguageServer.Refactor;
+namespace Bicep.Core.TypeSystem;
 
 public static class TypeStringifier
 {

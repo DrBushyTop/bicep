@@ -1,46 +1,36 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-using System;
-using System.Collections.Generic;
-using System.Linq;
-using Bicep.Core;
-using Bicep.Core.CodeAction;
 using Bicep.Core.Extensions;
+using Bicep.Core.Navigation;
 using Bicep.Core.Parsing;
+using Bicep.Core.PrettyPrintV2;
 using Bicep.Core.Semantics;
+using Bicep.Core.SourceGraph;
 using Bicep.Core.Syntax;
 using Bicep.Core.Syntax.Visitors;
+using Bicep.Core.Text;
 using Bicep.Core.TypeSystem;
 using Bicep.Core.TypeSystem.Types;
-using Bicep.Core.SourceGraph;
-using Bicep.LanguageServer.Completions;
-using Bicep.Core.Text;
-using Bicep.Core.PrettyPrintV2;
 
-namespace Bicep.LanguageServer.Refactor;
+namespace Bicep.Core.CodeAction.Fixes;
 
 /// <summary>
-/// Offers quick fixes to declare missing symbols reported as BCP057.
+/// Generates quick fixes to declare missing symbols reported as BCP057.
 /// </summary>
-public class UndefinedSymbolCodeFixProvider : ICodeFixProvider
+public static class UndefinedSymbolCodeFixGenerator
 {
-    private const string DiagnosticCode = "BCP057";
-
-    private readonly SemanticModel semanticModel;
-
-    public UndefinedSymbolCodeFixProvider(SemanticModel semanticModel)
-    {
-        this.semanticModel = semanticModel;
-    }
-
-    private string NewLine => semanticModel.Configuration.Formatting.Data.NewlineKind.ToEscapeSequence();
-
-    public IEnumerable<CodeFix> GetFixes(SemanticModel semanticModel, IReadOnlyList<SyntaxBase> matchingNodes)
+    /// <summary>
+    /// Generates code fixes for an undefined symbol (BCP057 diagnostic).
+    /// </summary>
+    /// <param name="semanticModel">The semantic model.</param>
+    /// <param name="variableAccess">The variable access syntax node that references an undefined symbol.</param>
+    /// <returns>Code fixes to create a parameter or variable declaration, or empty if fixes cannot be generated.</returns>
+    public static IEnumerable<CodeFix> GetFixes(SemanticModel semanticModel, VariableAccessSyntax variableAccess)
     {
         try
         {
-            return GetFixesInternal(semanticModel, matchingNodes);
+            return GetFixesInternal(semanticModel, variableAccess);
         }
         catch
         {
@@ -48,118 +38,80 @@ public class UndefinedSymbolCodeFixProvider : ICodeFixProvider
         }
     }
 
-    private IEnumerable<CodeFix> GetFixesInternal(SemanticModel semanticModel, IReadOnlyList<SyntaxBase> matchingNodes)
+    private static IEnumerable<CodeFix> GetFixesInternal(SemanticModel semanticModel, VariableAccessSyntax variableAccess)
     {
-        var results = new List<CodeFix>();
-
-        var allDiagnostics = semanticModel.GetAllDiagnostics();
-        var diagnostics = allDiagnostics.Where(diag => diag.Code == DiagnosticCode).ToArray();
-
-        if (diagnostics.Length == 0 || matchingNodes.Count == 0)
+        var name = variableAccess.Name.IdentifierName;
+        if (!Lexer.IsValidIdentifier(name))
         {
-            return results;
+            return [];
         }
 
-        // Collect variable accesses that are within the matching nodes (including descendants).
-        // The LSP handler gives us a set of nodes spanning the requested range; for cases like
-        // string interpolation or unary operators, the VariableAccess may be a descendant, not the node itself.
-        IEnumerable<VariableAccessSyntax> variableAccesses = matchingNodes.OfType<VariableAccessSyntax>();
-
-        if (!variableAccesses.Any())
+        // New declarations must be inserted before a statement; if the access isn't
+        // inside one (e.g., top-level expression), we can't determine insertion point
+        if (semanticModel.Binder.GetNearestAncestor<StatementSyntax>(variableAccess) is not { } parentStatement)
         {
-            var mostSpecificNode = matchingNodes.LastOrDefault();
-            if (mostSpecificNode is not null)
-            {
-                variableAccesses = SyntaxAggregator.AggregateByType<VariableAccessSyntax>(mostSpecificNode)
-                    .Where(variableAccess => diagnostics.Any(diag => SpansOverlap(variableAccess.Span.Position, variableAccess.GetEndPosition(), diag.Span)));
-            }
-            else
-            {
-                variableAccesses = Array.Empty<VariableAccessSyntax>();
-            }
+            return [];
         }
 
-        // Track seen symbol names to avoid generating duplicate fixes for the same identifier
-        HashSet<string> seen = new(StringComparer.Ordinal);
+        var moduleParameterTypeString = TryGetModuleParameterTypeString(semanticModel, variableAccess);
+        var contextualType = NullIfErrorOrAny(semanticModel.GetDeclaredType(variableAccess));
+        var declaredAssignment = semanticModel.GetDeclaredTypeAssignment(variableAccess);
+        var declaredAssignmentType = NullIfErrorOrAny(declaredAssignment?.Reference.Type);
+        var inferredType = NullIfErrorOrAny(semanticModel.GetTypeInfo(variableAccess));
+        var contextInferredType = InferByContext(semanticModel, variableAccess);
+        var effectiveType = declaredAssignmentType ?? contextualType ?? inferredType ?? contextInferredType;
 
-        foreach (var variableAccess in variableAccesses)
+        // Type resolution priority for generated parameters:
+        // 1. Module parameter types (preserve exact type from referenced module)
+        // 2. Clear usage context (bool in conditions, int in arithmetic)
+        // 3. Resource-derived types (e.g., resourceInput<'Microsoft.Storage/storageAccounts@2023-01-01'>.sku)
+        // 4. User-defined type aliases (preserve named types when possible)
+        // 5. Fallback to TypeStringifier with medium strictness
+        string parameterTypeString;
+        if (moduleParameterTypeString is not null)
         {
-            var moduleParameterTypeString = TryGetModuleParameterTypeString(semanticModel, variableAccess);
-            var diagnostic = diagnostics.FirstOrDefault(diag => SpansOverlap(variableAccess.Span.Position, variableAccess.GetEndPosition(), diag.Span));
-            if (diagnostic is null)
-            {
-                continue;
-            }
-
-            var name = variableAccess.Name.IdentifierName;
-            if (!seen.Add(name) || !Lexer.IsValidIdentifier(name))
-            {
-                continue;
-            }
-
-            // New declarations must be inserted before a statement; if the access isn't
-            // inside one (e.g., top-level expression), we can't determine insertion point
-            if (semanticModel.Binder.GetNearestAncestor<StatementSyntax>(variableAccess) is not { } parentStatement)
-            {
-                continue;
-            }
-
-            var contextualType = NullIfErrorOrAny(semanticModel.GetDeclaredType(variableAccess));
-            var declaredAssignment = semanticModel.GetDeclaredTypeAssignment(variableAccess);
-            var declaredAssignmentType = NullIfErrorOrAny(declaredAssignment?.Reference.Type);
-            var inferredType = NullIfErrorOrAny(semanticModel.GetTypeInfo(variableAccess));
-            var contextInferredType = InferByContext(semanticModel, variableAccess);
-            var effectiveType = declaredAssignmentType ?? contextualType ?? inferredType ?? contextInferredType;
-
-            // Type resolution priority for generated parameters:
-            // 1. Module parameter types (preserve exact type from referenced module)
-            // 2. Clear usage context (bool in conditions, int in arithmetic)
-            // 3. Resource-derived types (e.g., resourceInput<'Microsoft.Storage/storageAccounts@2023-01-01'>.sku)
-            // 4. User-defined type aliases (preserve named types when possible)
-            // 5. Fallback to TypeStringifier with medium strictness
-            string parameterTypeString;
-            if (moduleParameterTypeString is not null)
-            {
-                parameterTypeString = moduleParameterTypeString;
-            }
-            else if (contextInferredType is BooleanType or IntegerType)
-            {
-                // Clear usage context - use the inferred primitive type
-                parameterTypeString = GetTypeString(contextInferredType);
-            }
-            else
-            {
-                // No clear usage context - try resource-derived or complex types
-                parameterTypeString = TryGetResourceInputTypeString(semanticModel, variableAccess)
-                    ?? TryGetUserDefinedTypeName(semanticModel, variableAccess, declaredAssignment)
-                    ?? GetTypeString(effectiveType);
-            }
-
-            // For variables, use simpler type string for initializer
-            var variableTypeString = GetTypeString(effectiveType);
-
-            foreach (var fix in CreateQuickFixes(parentStatement, name, parameterTypeString, variableTypeString, effectiveType, NewLine))
-            {
-                results.Add(fix);
-            }
+            parameterTypeString = moduleParameterTypeString;
+        }
+        else if (contextInferredType is BooleanType or IntegerType)
+        {
+            // Clear usage context - use the inferred primitive type
+            parameterTypeString = GetTypeString(contextInferredType);
+        }
+        else
+        {
+            // No clear usage context - try resource-derived or complex types
+            parameterTypeString = TryGetResourceInputTypeString(semanticModel, variableAccess)
+                ?? TryGetUserDefinedTypeName(semanticModel, variableAccess, declaredAssignment)
+                ?? GetTypeString(effectiveType);
         }
 
-        return results;
+        // For variables, use simpler type string for initializer
+        var variableTypeString = GetTypeString(effectiveType);
+        var newLine = semanticModel.Configuration.Formatting.Data.NewlineKind.ToEscapeSequence();
+
+        return CreateQuickFixes(semanticModel, parentStatement, name, parameterTypeString, variableTypeString, effectiveType, newLine);
     }
 
-    private IEnumerable<CodeFix> CreateQuickFixes(StatementSyntax parentStatement, string name, string parameterTypeString, string variableTypeString, TypeSymbol? effectiveType, string newline)
+    private static IEnumerable<CodeFix> CreateQuickFixes(
+        SemanticModel semanticModel,
+        StatementSyntax parentStatement,
+        string name,
+        string parameterTypeString,
+        string variableTypeString,
+        TypeSymbol? effectiveType,
+        string newline)
     {
-        var parameterInsertionOffset = FindInsertionOffset(parentStatement, typeof(ParameterDeclarationSyntax));
-        var parameterText = BuildDeclarationText(parameterInsertionOffset, $"param {name} {parameterTypeString}", newline);
+        var parameterInsertionOffset = FindInsertionOffset(semanticModel, parentStatement, typeof(ParameterDeclarationSyntax));
+        var parameterText = BuildDeclarationText(semanticModel, parameterInsertionOffset, $"param {name} {parameterTypeString}", newline);
         yield return new CodeFix(
             $"Create parameter '{name}'",
             isPreferred: false,
             CodeFixKind.QuickFix,
             new CodeReplacement(new TextSpan(parameterInsertionOffset, 0), parameterText));
 
-        var variableInsertionOffset = FindInsertionOffset(parentStatement, typeof(VariableDeclarationSyntax));
+        var variableInsertionOffset = FindInsertionOffset(semanticModel, parentStatement, typeof(VariableDeclarationSyntax));
         var defaultInitializer = GetDefaultInitializer(effectiveType);
-        var variableText = BuildDeclarationText(variableInsertionOffset, $"var {name} = {defaultInitializer}", newline);
+        var variableText = BuildDeclarationText(semanticModel, variableInsertionOffset, $"var {name} = {defaultInitializer}", newline);
         yield return new CodeFix(
             $"Create variable '{name}'",
             isPreferred: false,
@@ -172,9 +124,9 @@ public class UndefinedSymbolCodeFixProvider : ICodeFixProvider
     /// Ensures consistent formatting: adds newlines to create one blank line
     /// between the new declaration and existing code.
     /// </summary>
-    private string BuildDeclarationText(int insertionOffset, string declaration, string newline)
+    private static string BuildDeclarationText(SemanticModel semanticModel, int insertionOffset, string declaration, string newline)
     {
-        var existingNewlines = CountConsecutiveNewlinesAtOffset(insertionOffset, newline);
+        var existingNewlines = CountConsecutiveNewlinesAtOffset(semanticModel, insertionOffset, newline);
 
         // Target spacing: one blank line after the declaration (2 newlines total).
         // If we're already on a blank line, add just enough to separate cleanly.
@@ -185,7 +137,7 @@ public class UndefinedSymbolCodeFixProvider : ICodeFixProvider
         return $"{declaration}{spacing}";
     }
 
-    private int CountConsecutiveNewlinesAtOffset(int insertionOffset, string newline)
+    private static int CountConsecutiveNewlinesAtOffset(SemanticModel semanticModel, int insertionOffset, string newline)
     {
         var lineStarts = semanticModel.SourceFile.LineStarts;
         if (lineStarts.Length == 0 || insertionOffset < 0 || insertionOffset > semanticModel.SourceFile.Text.Length)
@@ -227,7 +179,7 @@ public class UndefinedSymbolCodeFixProvider : ICodeFixProvider
     /// Inserts after existing declarations of the same type, or before the anchor
     /// statement if no prior declarations of that type exist.
     /// </summary>
-    private int FindInsertionOffset(StatementSyntax anchorStatement, Type declarationType)
+    private static int FindInsertionOffset(SemanticModel semanticModel, StatementSyntax anchorStatement, Type declarationType)
     {
         var sourceFile = semanticModel.SourceFile;
         var lineStarts = sourceFile.LineStarts;
@@ -243,11 +195,46 @@ public class UndefinedSymbolCodeFixProvider : ICodeFixProvider
             return TextCoordinateConverter.GetOffset(lineStarts, insertLine, 0);
         }
 
-        var anchorStartLine = ExpressionAndTypeExtractor.GetFirstLineOfStatementIncludingComments(
+        var anchorStartLine = GetFirstLineOfStatementIncludingComments(
             lineStarts,
             sourceFile.ProgramSyntax,
             anchorStatement);
         return TextCoordinateConverter.GetOffset(lineStarts, anchorStartLine, 0);
+    }
+
+    /// <summary>
+    /// Gets the first line of a statement, accounting for any preceding comment lines
+    /// that belong to the statement.
+    /// </summary>
+    public static int GetFirstLineOfStatementIncludingComments(IReadOnlyList<int> lineStarts, ProgramSyntax programSyntax, StatementSyntax statementSyntax)
+    {
+        var statementStartLine = TextCoordinateConverter.GetPosition(lineStarts, statementSyntax.Span.Position).line; // Includes trivia but not comments
+
+        for (int line = statementStartLine; line >= 1; --line)
+        {
+            var (hasContent, hasComments) = CheckLineContent(lineStarts, programSyntax, line - 1);
+            if (hasComments && !hasContent)
+            {
+                continue;
+            }
+            else
+            {
+                return line;
+            }
+        }
+
+        return 0;
+    }
+
+    /// <summary>
+    /// Checks if a line has content (non-whitespace tokens) and/or comments.
+    /// </summary>
+    public static (bool hasContent, bool hasComments) CheckLineContent(IReadOnlyList<int> lineStarts, SyntaxBase programSyntax, int line)
+    {
+        var lineSpan = TextCoordinateConverter.GetLineSpan(lineStarts, programSyntax.GetEndPosition(), line);
+        var visitor = new CheckContentVisitor(lineSpan);
+        programSyntax.Accept(visitor);
+        return (visitor.HasContent, visitor.HasComments);
     }
 
     private static string GetTypeString(TypeSymbol? type)
@@ -471,9 +458,6 @@ public class UndefinedSymbolCodeFixProvider : ICodeFixProvider
     }
 
     private static TypeSymbol? NullIfErrorOrAny(TypeSymbol? type) => type is ErrorType or AnyType ? null : type;
-
-    private static bool SpansOverlap(int requestStart, int requestEnd, TextSpan span) =>
-        requestStart <= span.GetEndPosition() && requestEnd >= span.Position;
 
     /// <summary>
     /// Checks if the child syntax node is contained within the parent syntax node's span.
@@ -757,5 +741,45 @@ public class UndefinedSymbolCodeFixProvider : ICodeFixProvider
         };
     }
 
-}
+    /// <summary>
+    /// Visitor to check if a line has content and/or comments.
+    /// </summary>
+    private sealed class CheckContentVisitor : CstVisitor
+    {
+        private readonly TextSpan span;
 
+        public CheckContentVisitor(TextSpan span)
+        {
+            this.span = span;
+        }
+
+        public bool HasContent { get; private set; } = false;
+        public bool HasComments { get; private set; } = false;
+
+        public override void VisitSyntaxTrivia(SyntaxTrivia syntaxTrivia)
+        {
+            if (!HasComments && TextSpan.AreOverlapping(span, syntaxTrivia.Span))
+            {
+                if (syntaxTrivia.Type == SyntaxTriviaType.SingleLineComment || syntaxTrivia.Type == SyntaxTriviaType.MultiLineComment)
+                {
+                    HasComments = true;
+                }
+            }
+        }
+
+        protected override void VisitInternal(SyntaxBase node)
+        {
+            if ((HasComments && HasContent) || !TextSpan.AreOverlapping(span, node.GetSpanIncludingTrivia()))
+            {
+                return;
+            }
+
+            if (!HasContent && node is Token token && token.Text.Trim().Length > 0)
+            {
+                HasContent = true;
+            }
+
+            base.VisitInternal(node);
+        }
+    }
+}

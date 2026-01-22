@@ -26,7 +26,7 @@ using Bicep.LanguageServer.Telemetry;
 using Bicep.LanguageServer.Utils;
 using OmniSharp.Extensions.LanguageServer.Protocol.Models;
 using static Bicep.LanguageServer.Completions.BicepCompletionContext;
-using static Bicep.LanguageServer.Refactor.TypeStringifier;
+using static Bicep.Core.TypeSystem.TypeStringifier;
 using static Bicep.LanguageServer.Telemetry.BicepTelemetryEvent;
 using static Google.Protobuf.Reflection.ExtensionRangeOptions.Types;
 using Type = System.Type;

@@ -352,7 +352,7 @@ namespace Bicep.Core.Semantics
 
                 if (diagnosticLine == 0 || !diagnostic.CanBeSuppressed())
                 {
-                    filteredDiagnostics.Add(diagnostic);
+                    filteredDiagnostics.Add(AugmentWithUndefinedSymbolFixes(diagnostic));
                     continue;
                 }
 
@@ -362,10 +362,44 @@ namespace Bicep.Core.Semantics
                     continue;
                 }
 
-                filteredDiagnostics.Add(diagnostic);
+                filteredDiagnostics.Add(AugmentWithUndefinedSymbolFixes(diagnostic));
             }
 
             return [.. filteredDiagnostics];
+        }
+
+        /// <summary>
+        /// Augments BCP057 (undefined symbol) diagnostics with code fixes to create parameters or variables.
+        /// </summary>
+        private IDiagnostic AugmentWithUndefinedSymbolFixes(IDiagnostic diagnostic)
+        {
+            // Only augment BCP057 diagnostics that don't already have fixes
+            if (diagnostic.Code != "BCP057" || diagnostic.Fixes.Any())
+            {
+                return diagnostic;
+            }
+
+            // Find the VariableAccessSyntax at this diagnostic's span
+            var variableAccess = SyntaxAggregator.AggregateByType<VariableAccessSyntax>(this.SourceFile.ProgramSyntax)
+                .FirstOrDefault(va => va.Span.Position == diagnostic.Span.Position && va.Span.Length == diagnostic.Span.Length);
+
+            if (variableAccess is null)
+            {
+                return diagnostic;
+            }
+
+            var fixes = UndefinedSymbolCodeFixGenerator.GetFixes(this, variableAccess).ToArray();
+            if (fixes.Length == 0)
+            {
+                return diagnostic;
+            }
+
+            if (diagnostic is Diagnostic diag)
+            {
+                return diag.WithAppendedFixes(fixes);
+            }
+
+            return diagnostic;
         }
 
         /// <summary>
