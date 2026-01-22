@@ -487,10 +487,15 @@ public static class UndefinedSymbolCodeFixGenerator
     /// Checks if the child syntax node is contained within the parent syntax node's span.
     /// This is used instead of reference equality when walking up the syntax tree,
     /// because the child may be wrapped in intermediate nodes (e.g., parentheses).
+    /// Uses <see cref="IPositionableExtensions.IsOverlapping(IPositionable,int)"/> to
+    /// avoid duplicating span comparison logic.
     /// </summary>
-    private static bool IsContainedIn(SyntaxBase child, SyntaxBase parent) =>
-        child.Span.Position >= parent.Span.Position &&
-        child.Span.GetEndPosition() <= parent.Span.GetEndPosition();
+    private static bool IsContainedIn(SyntaxBase child, SyntaxBase parent)
+    {
+        var span = child.Span;
+        return parent.IsOverlapping(span.Position) &&
+               parent.IsOverlapping(span.GetEndPosition());
+    }
 
     private static string? TryGetModuleParameterTypeString(SemanticModel semanticModel, VariableAccessSyntax variableAccess)
     {
