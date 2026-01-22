@@ -85,24 +85,25 @@ public static class UndefinedSymbolCodeFixGenerator
                 ?? GetTypeString(effectiveType);
         }
 
-        // For variables, use simpler type string for initializer
-        var variableTypeString = GetTypeString(effectiveType);
-        var newLine = semanticModel.Configuration.Formatting.Data.NewlineKind.ToEscapeSequence();
+        var prettyPrintContext = PrettyPrinterV2Context.From(semanticModel);
 
-        return CreateQuickFixes(semanticModel, parentStatement, name, parameterTypeString, variableTypeString, effectiveType, newLine);
+        return CreateQuickFixes(semanticModel, prettyPrintContext, parentStatement, name, parameterTypeString, effectiveType);
     }
 
     private static IEnumerable<CodeFix> CreateQuickFixes(
         SemanticModel semanticModel,
+        PrettyPrinterV2Context prettyPrintContext,
         StatementSyntax parentStatement,
         string name,
         string parameterTypeString,
-        string variableTypeString,
-        TypeSymbol? effectiveType,
-        string newline)
+        TypeSymbol? effectiveType)
     {
         var parameterInsertionOffset = FindInsertionOffset(semanticModel, parentStatement, typeof(ParameterDeclarationSyntax));
-        var parameterText = BuildDeclarationText(semanticModel, parameterInsertionOffset, $"param {name} {parameterTypeString}", newline);
+        var parameterText = BuildDeclarationText(
+            semanticModel,
+            prettyPrintContext,
+            parameterInsertionOffset,
+            $"{SyntaxFactory.ParameterKeywordToken.Text} {name} {parameterTypeString}");
         yield return new CodeFix(
             $"Create parameter '{name}'",
             isPreferred: false,
@@ -111,7 +112,12 @@ public static class UndefinedSymbolCodeFixGenerator
 
         var variableInsertionOffset = FindInsertionOffset(semanticModel, parentStatement, typeof(VariableDeclarationSyntax));
         var defaultInitializer = GetDefaultInitializer(effectiveType);
-        var variableText = BuildDeclarationText(semanticModel, variableInsertionOffset, $"var {name} = {defaultInitializer}", newline);
+        var variableDeclaration = SyntaxFactory.CreateVariableDeclaration(name, defaultInitializer);
+        var variableText = BuildDeclarationText(
+            semanticModel,
+            prettyPrintContext,
+            variableInsertionOffset,
+            PrettyPrinterV2.Print(variableDeclaration, prettyPrintContext).TrimEnd());
         yield return new CodeFix(
             $"Create variable '{name}'",
             isPreferred: false,
@@ -124,15 +130,15 @@ public static class UndefinedSymbolCodeFixGenerator
     /// Ensures consistent formatting: adds newlines to create one blank line
     /// between the new declaration and existing code.
     /// </summary>
-    private static string BuildDeclarationText(SemanticModel semanticModel, int insertionOffset, string declaration, string newline)
+    private static string BuildDeclarationText(SemanticModel semanticModel, PrettyPrinterV2Context prettyPrintContext, int insertionOffset, string declaration)
     {
-        var existingNewlines = CountConsecutiveNewlinesAtOffset(semanticModel, insertionOffset, newline);
+        var existingNewlines = CountConsecutiveNewlinesAtOffset(semanticModel, insertionOffset, prettyPrintContext.Newline);
 
         // Target spacing: one blank line after the declaration (2 newlines total).
         // If we're already on a blank line, add just enough to separate cleanly.
         var totalDesiredNewlines = 2;
         var additionalNewlines = Math.Max(totalDesiredNewlines - existingNewlines, 1);
-        var spacing = string.Concat(Enumerable.Repeat(newline, additionalNewlines));
+        var spacing = string.Concat(Enumerable.Repeat(prettyPrintContext.Newline, additionalNewlines));
 
         return $"{declaration}{spacing}";
     }
@@ -239,28 +245,39 @@ public static class UndefinedSymbolCodeFixGenerator
 
     private static string GetTypeString(TypeSymbol? type)
     {
-        // Use TypeStringifier for consistent type string generation
-        // Medium strictness gives us reasonable types (e.g., 'int' instead of literal '123')
-        // Remove top-level nullability since parameters should typically not be nullable by default
+        // When we cannot infer a meaningful type, fall back to "string" rather than
+        // emitting an opaque helper type like "object? /* unknown */". This matches
+        // user expectations better for simple cases like:
+        //   output out string = missingName
+        // where we want:   param missingName string
+        if (type is null or ErrorType or AnyType)
+        {
+            return LanguageConstants.String.Name;
+        }
+
+        // Use TypeStringifier for consistent type string generation.
+        // Medium strictness gives us reasonable types (e.g., 'int' instead of
+        // literal '123'), and we remove top-level nullability so generated
+        // parameters are non-nullable by default.
         return TypeStringifier.Stringify(type, typeProperty: null, TypeStringifier.Strictness.Medium, removeTopLevelNullability: true);
     }
 
-    private static string GetDefaultInitializer(TypeSymbol? type)
+    private static SyntaxBase GetDefaultInitializer(TypeSymbol? type)
     {
         return GetDefaultInitializerCore(type, []);
     }
 
-    private static string GetDefaultInitializerCore(TypeSymbol? type, HashSet<TypeSymbol> visitedTypes)
+    private static SyntaxBase GetDefaultInitializerCore(TypeSymbol? type, HashSet<TypeSymbol> visitedTypes)
     {
         if (type is null)
         {
-            return "''";
+            return SyntaxFactory.CreateStringLiteral(string.Empty);
         }
 
         // Prevent infinite recursion for recursive types
         if (visitedTypes.Contains(type))
         {
-            return "{}";
+            return SyntaxFactory.CreateObject([]);
         }
 
         // Handle nullable types - use the non-null default
@@ -271,20 +288,20 @@ public static class UndefinedSymbolCodeFixGenerator
 
         return type switch
         {
-            BooleanLiteralType boolLit => boolLit.Value.ToString().ToLowerInvariant(),
-            BooleanType => "false",
-            IntegerLiteralType intLit => intLit.Value.ToString(),
-            IntegerType => "0",
-            StringLiteralType strLit => StringUtils.EscapeBicepString(strLit.RawStringValue),
-            StringType => "''",
-            ArrayType or TypedArrayType or TupleType => "[]",
+            BooleanLiteralType boolLit => SyntaxFactory.CreateBooleanLiteral(boolLit.Value),
+            BooleanType => SyntaxFactory.CreateBooleanLiteral(false),
+            IntegerLiteralType intLit => SyntaxFactory.CreatePositiveOrNegativeInteger(intLit.Value),
+            IntegerType => SyntaxFactory.CreateIntegerLiteral(0),
+            StringLiteralType strLit => SyntaxFactory.CreateStringLiteral(strLit.RawStringValue),
+            StringType => SyntaxFactory.CreateStringLiteral(string.Empty),
+            ArrayType or TypedArrayType or TupleType => SyntaxFactory.CreateArray([]),
             ObjectType objectType => GetDefaultInitializerForObject(objectType, visitedTypes),
             UnionType union => GetDefaultInitializerForUnion(union, visitedTypes),
-            _ => "''"
+            _ => SyntaxFactory.CreateStringLiteral(string.Empty)
         };
     }
 
-    private static string GetDefaultInitializerForObject(ObjectType objectType, HashSet<TypeSymbol> visitedTypes)
+    private static SyntaxBase GetDefaultInitializerForObject(ObjectType objectType, HashSet<TypeSymbol> visitedTypes)
     {
         var writeableProperties = objectType.Properties.Values
             .Where(p => !p.Flags.HasFlag(TypePropertyFlags.ReadOnly))
@@ -293,34 +310,42 @@ public static class UndefinedSymbolCodeFixGenerator
         // For empty objects or objects with only optional properties, just use {}
         if (writeableProperties.Length == 0)
         {
-            return "{}";
+            return SyntaxFactory.CreateObject([]);
         }
 
         // Limit object expansion to 5 properties to keep generated code readable;
         // larger objects are better left as {} for manual population
         if (writeableProperties.Length > 5)
         {
-            return "{}";
+            return SyntaxFactory.CreateObject([]);
         }
 
         visitedTypes = [.. visitedTypes, objectType];
 
         var properties = writeableProperties
-            .Select(p =>
-            {
-                var propName = StringUtils.EscapeBicepPropertyName(p.Name);
-                var defaultValue = GetDefaultInitializerCore(p.TypeReference.Type, visitedTypes);
-                return $"{propName}: {defaultValue}";
-            });
+            .Select(p => CreateObjectPropertySyntax(p.Name, GetDefaultInitializerCore(p.TypeReference.Type, visitedTypes)));
 
-        return $"{{ {string.Join(", ", properties)} }}";
+        return SyntaxFactory.CreateObject(properties);
     }
 
-    private static string GetDefaultInitializerForUnion(UnionType union, HashSet<TypeSymbol> visitedTypes)
+    private static SyntaxBase GetDefaultInitializerForUnion(UnionType union, HashSet<TypeSymbol> visitedTypes)
     {
         // For unions, try to pick a reasonable default from the first non-null member
         var firstNonNullMember = union.Members.FirstOrDefault(m => m.Type is not NullType)?.Type;
-        return firstNonNullMember is not null ? GetDefaultInitializerCore(firstNonNullMember, visitedTypes) : "null";
+        return firstNonNullMember is not null ? GetDefaultInitializerCore(firstNonNullMember, visitedTypes) : SyntaxFactory.CreateNullLiteral();
+    }
+
+    private static ObjectPropertySyntax CreateObjectPropertySyntax(string name, SyntaxBase value)
+    {
+        SyntaxBase keySyntax = StringUtils.IsPropertyNameEscapingRequired(name)
+            ? SyntaxFactory.CreateStringLiteral(name)
+            : SyntaxFactory.CreateIdentifier(name);
+
+        var colonToken = value is SkippedTriviaSyntax
+            ? SyntaxFactory.CreateToken(TokenType.Colon, SyntaxFactory.EmptyTrivia)
+            : SyntaxFactory.CreateToken(TokenType.Colon, SyntaxFactory.EmptyTrivia, SyntaxFactory.SingleSpaceTrivia);
+
+        return new ObjectPropertySyntax(keySyntax, colonToken, value);
     }
 
     /// <summary>
@@ -529,7 +554,7 @@ public static class UndefinedSymbolCodeFixGenerator
 
                 if (parameterType is IUnresolvedResourceDerivedType unresolvedResourceDerivedType)
                 {
-                    return FormatResourceDerivedType(unresolvedResourceDerivedType);
+                    return TypeStringifier.FormatResourceDerivedType(unresolvedResourceDerivedType);
                 }
 
                 return GetTypeString(parameterType);
@@ -539,21 +564,6 @@ public static class UndefinedSymbolCodeFixGenerator
         }
 
         return null;
-    }
-
-    private static string FormatResourceDerivedType(IUnresolvedResourceDerivedType unresolved)
-    {
-        var pointer = unresolved.PointerSegments.Length > 0
-            ? $".{string.Join(".", unresolved.PointerSegments)}"
-            : string.Empty;
-
-        var keyword = unresolved.Variant switch
-        {
-            ResourceDerivedTypeVariant.Output => "resourceOutput",
-            _ => "resourceInput",
-        };
-
-        return $"{keyword}<'{unresolved.TypeReference.FormatName()}'>" + pointer;
     }
 
     /// <summary>

@@ -91,6 +91,21 @@ public static class TypeStringifier
         return null;
     }
 
+    public static string FormatResourceDerivedType(IUnresolvedResourceDerivedType unresolved)
+    {
+        var pointer = unresolved.PointerSegments.Length > 0
+            ? $".{string.Join(".", unresolved.PointerSegments)}"
+            : string.Empty;
+
+        var keyword = unresolved.Variant switch
+        {
+            ResourceDerivedTypeVariant.Output => LanguageConstants.TypeNameResourceOutput,
+            _ => LanguageConstants.TypeNameResourceInput,
+        };
+
+        return $"{keyword}<'{unresolved.TypeReference.FormatName()}'>" + pointer;
+    }
+
     private static string StringifyCore(TypeSymbol? type, TypeProperty? typeProperty, Strictness strictness, TypeSymbol[] visitedTypes, bool removeTopLevelNullability = false)
     {
         if (type == null)
