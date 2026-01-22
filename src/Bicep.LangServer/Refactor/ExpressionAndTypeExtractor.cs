@@ -163,7 +163,7 @@ public class ExpressionAndTypeExtractor : ICodeFixProvider
         //   what we're assigning to), otherwise use the actual calculated type of the expression
         var inferredType = semanticModel.GetTypeInfo(extractionContext.ExpressionSyntax);
         var declaredType = semanticModel.GetDeclaredType(extractionContext.ExpressionSyntax);
-        var newParamType = NullIfErrorOrAny(declaredType) ?? NullIfErrorOrAny(inferredType);
+        var newParamType = TypeHelper.NullIfErrorOrAny(declaredType) ?? TypeHelper.NullIfErrorOrAny(inferredType);
 
         // Don't create nullable params - they're not allowed to have default values
         const bool ignoreTopLevelNullability = true;
@@ -359,8 +359,6 @@ public class ExpressionAndTypeExtractor : ICodeFixProvider
         var prettyDeclarationText = PrettyPrinterV2.PrintValid(p.Program(), PrettyPrinterV2Options.Default);
         return prettyDeclarationText;
     }
-
-    private TypeSymbol? NullIfErrorOrAny(TypeSymbol? type) => type is ErrorType || type is AnyType ? null : type;
 
     private string FindUnusedValidName(ExtractionContext extractionContext, string defaultNonContextualName)
     {

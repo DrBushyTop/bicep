@@ -931,5 +931,7 @@ namespace Bicep.Core.TypeSystem
                 mUniqueTypes.Count == 1 => mUniqueTypes.Single(),
             _ => null,
         };
+
+        public static TypeSymbol? NullIfErrorOrAny(TypeSymbol? type) => type is ErrorType or AnyType ? null : type;
     }
 }

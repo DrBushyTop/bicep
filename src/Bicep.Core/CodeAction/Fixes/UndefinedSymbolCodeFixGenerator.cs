@@ -54,10 +54,10 @@ public static class UndefinedSymbolCodeFixGenerator
         }
 
         var moduleParameterTypeString = TryGetModuleParameterTypeString(semanticModel, variableAccess);
-        var contextualType = NullIfErrorOrAny(semanticModel.GetDeclaredType(variableAccess));
+        var contextualType = TypeHelper.NullIfErrorOrAny(semanticModel.GetDeclaredType(variableAccess));
         var declaredAssignment = semanticModel.GetDeclaredTypeAssignment(variableAccess);
-        var declaredAssignmentType = NullIfErrorOrAny(declaredAssignment?.Reference.Type);
-        var inferredType = NullIfErrorOrAny(semanticModel.GetTypeInfo(variableAccess));
+        var declaredAssignmentType = TypeHelper.NullIfErrorOrAny(declaredAssignment?.Reference.Type);
+        var inferredType = TypeHelper.NullIfErrorOrAny(semanticModel.GetTypeInfo(variableAccess));
         var contextInferredType = InferByContext(semanticModel, variableAccess);
         var effectiveType = declaredAssignmentType ?? contextualType ?? inferredType ?? contextInferredType;
 
@@ -433,8 +433,6 @@ public static class UndefinedSymbolCodeFixGenerator
         return isNullable ? $"{typeAlias.Name}?" : typeAlias.Name;
     }
 
-    private static TypeSymbol? NullIfErrorOrAny(TypeSymbol? type) => type is ErrorType or AnyType ? null : type;
-
     /// <summary>
     /// Checks if the child syntax node is contained within the parent syntax node's span.
     /// This is used instead of reference equality when walking up the syntax tree,
@@ -566,7 +564,7 @@ public static class UndefinedSymbolCodeFixGenerator
         SyntaxBase? current = semanticModel.Binder.GetParent(variableAccess);
         while (current is not null)
         {
-            var declaredType = NullIfErrorOrAny(semanticModel.GetDeclaredType(current));
+            var declaredType = TypeHelper.NullIfErrorOrAny(semanticModel.GetDeclaredType(current));
             if (declaredType is not null)
             {
                 return declaredType;
@@ -681,37 +679,20 @@ public static class UndefinedSymbolCodeFixGenerator
             {
                 // Use span-based containment to determine which operand contains the access
                 // This handles cases where access is wrapped (e.g., in parentheses)
-                var otherExpression = IsContainedIn(access, binary.LeftExpression) ? binary.RightExpression : binary.LeftExpression;
-                var otherType = NullIfErrorOrAny(model.GetTypeInfo(otherExpression));
+        var otherExpression = IsContainedIn(access, binary.LeftExpression) ? binary.RightExpression : binary.LeftExpression;
+        var otherType = model.GetTypeInfo(otherExpression);
 
-                if (TryMapToPrimitive(otherType) is { } primitiveType)
-                {
-                    return primitiveType;
-                }
+        if (TypeHelper.TryGetArmPrimitiveType(otherType) is { } primitiveType &&
+            primitiveType is StringType or IntegerType or BooleanType)
+        {
+            return primitiveType;
+        }
             }
 
             current = model.Binder.GetParent(current);
         }
 
         return null;
-    }
-
-    private static TypeSymbol? TryMapToPrimitive(TypeSymbol? type)
-    {
-        if (type is null)
-        {
-            return null;
-        }
-
-        var nonNullable = TypeHelper.TryRemoveNullability(type) ?? type;
-
-        return nonNullable switch
-        {
-            StringLiteralType or StringType => LanguageConstants.String,
-            IntegerLiteralType or IntegerType => LanguageConstants.Int,
-            BooleanLiteralType or BooleanType => LanguageConstants.Bool,
-            _ => null,
-        };
     }
 
 }
