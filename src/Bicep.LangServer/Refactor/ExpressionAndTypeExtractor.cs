@@ -433,37 +433,19 @@ public class ExpressionAndTypeExtractor : ICodeFixProvider
     private bool IsLastLine(int line) => line >= semanticModel.SourceFile.LineStarts.Length - 1;
 
     private LineContentType CheckLineContent(int line) =>
-        new(CheckLineContent(semanticModel.SourceFile.LineStarts, semanticModel.SourceFile.ProgramSyntax, line));
+        new(StatementLineHelper.CheckLineContent(semanticModel.SourceFile.LineStarts, semanticModel.SourceFile.ProgramSyntax, line));
 
     public static (bool hasContent, bool hasComments) CheckLineContent(IReadOnlyList<int> lineStarts, SyntaxBase programSyntax, int line)
     {
-        var lineSpan = TextCoordinateConverter.GetLineSpan(lineStarts, programSyntax.GetEndPosition(), line);
-        var visitor = new CheckContentVisitor(lineSpan);
-        programSyntax.Accept(visitor);
-        return (visitor.HasContent, visitor.HasComments);
+        return StatementLineHelper.CheckLineContent(lineStarts, programSyntax, line);
     }
 
     private static int GetFirstLineOfStatementIncludingComments(BicepSourceFile sourceFile, StatementSyntax statementSyntax) =>
-        GetFirstLineOfStatementIncludingComments(sourceFile.LineStarts, sourceFile.ProgramSyntax, statementSyntax);
+        StatementLineHelper.GetFirstLineOfStatementIncludingComments(sourceFile.LineStarts, sourceFile.ProgramSyntax, statementSyntax);
 
     public static int GetFirstLineOfStatementIncludingComments(IReadOnlyList<int> lineStarts, ProgramSyntax programSyntax, StatementSyntax statementSyntax)
     {
-        var statementStartLine = TextCoordinateConverter.GetPosition(lineStarts, statementSyntax.Span.Position).line; // Includes trivia but not comments
-
-        for (int line = statementStartLine; line >= 1; --line)
-        {
-            var (hasContent, hasComments) = CheckLineContent(lineStarts, programSyntax, line - 1);
-            if (hasComments && !hasContent)
-            {
-                continue;
-            }
-            else
-            {
-                return line;
-            }
-        }
-
-        return 0;
+        return StatementLineHelper.GetFirstLineOfStatementIncludingComments(lineStarts, programSyntax, statementSyntax);
     }
 
     private static int GetLastLineOfStatement(BicepSourceFile sourceFile, StatementSyntax statementSyntax)
@@ -492,43 +474,4 @@ public class ExpressionAndTypeExtractor : ICodeFixProvider
         return (addBefore, addAfter);
     }
 
-    private sealed class CheckContentVisitor : CstVisitor
-    {
-        private readonly TextSpan span;
-
-        public CheckContentVisitor(TextSpan span)
-        {
-            this.span = span;
-        }
-
-        public bool HasContent { get; private set; } = false;
-        public bool HasComments { get; private set; } = false;
-        public bool HasContentOrComments => HasContent || HasComments;
-
-        public override void VisitSyntaxTrivia(SyntaxTrivia syntaxTrivia)
-        {
-            if (!HasComments && TextSpan.AreOverlapping(span, syntaxTrivia.Span))
-            {
-                if (syntaxTrivia.Type == SyntaxTriviaType.SingleLineComment || syntaxTrivia.Type == SyntaxTriviaType.MultiLineComment)
-                {
-                    HasComments = true;
-                }
-            }
-        }
-
-        protected override void VisitInternal(SyntaxBase node)
-        {
-            if ((HasComments && HasContent) || !TextSpan.AreOverlapping(span, node.GetSpanIncludingTrivia()))
-            {
-                return;
-            }
-
-            if (!HasContent && node is Token token && token.Text.Trim().Length > 0)
-            {
-                HasContent = true;
-            }
-
-            base.VisitInternal(node);
-        }
-    }
 }
